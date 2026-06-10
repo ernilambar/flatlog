@@ -20,7 +20,7 @@ const defaultConfig = {
   versionPattern: '## {{version}} - YYYY-MM-DD',
   bulletSign: '- ',
   allowedPrefixes: ['Added:', 'Changed:', 'Fixed:'],
-  initialReleaseText: 'Initial release.',
+  initialReleaseText: 'Initial release',
   maxLineLength: 120
 }
 
@@ -34,6 +34,11 @@ const configSchema = {
   maxLineLength: 'number'
 }
 
+const RED = '\x1b[31m'
+const GREEN = '\x1b[32m'
+const YELLOW = '\x1b[33m'
+const RESET = '\x1b[0m'
+
 let config = { ...defaultConfig }
 const configPath = path.resolve(process.cwd(), '.flatlogrc.json')
 if (fs.existsSync(configPath)) {
@@ -42,20 +47,20 @@ if (fs.existsSync(configPath)) {
     const validated = {}
     for (const [key, value] of Object.entries(raw)) {
       if (!(key in configSchema)) {
-        console.warn(`\x1b[33mflatlog Warning: Unknown config key "${key}" ignored.\x1b[0m`)
+        console.warn(`${YELLOW}Warning: Unknown config key "${key}". Ignored.${RESET}`)
         continue
       }
       const expected = configSchema[key]
       const actual = Array.isArray(value) ? 'array' : typeof value
       if (actual !== expected) {
-        console.warn(`\x1b[33mflatlog Warning: Config key "${key}" must be ${expected}, got ${actual}. Using default.\x1b[0m`)
+        console.warn(`${YELLOW}Warning: Config "${key}" expects ${expected}, got ${actual}. Using default.${RESET}`)
         continue
       }
       validated[key] = value
     }
     config = { ...defaultConfig, ...validated }
   } catch (e) {
-    console.warn('\x1b[33mflatlog Warning: Malformed .flatlogrc.json found. Falling back to defaults.\x1b[0m')
+    console.warn(`${YELLOW}Warning: .flatlogrc.json is invalid. Using defaults.${RESET}`)
   }
 }
 
@@ -87,6 +92,7 @@ Commands:
   init                   Create a new changelog
   bullet "<Prefix: text>" Insert a bullet item (e.g. "Fixed: typo")
   release <version>      Promote placeholder to a versioned release header
+  next                   Add a new unreleased block (use this after a release)
   validate               Validate changelog structure
   get-version            Print the topmost stable version
   get-release-notes      Print bullet notes for the latest release
@@ -103,12 +109,6 @@ Options:
 `.trim())
   process.exit(0)
 }
-
-// Standard ANSI Terminal Color Codes
-const RED = '\x1b[31m'
-const GREEN = '\x1b[32m'
-const YELLOW = '\x1b[33m'
-const RESET = '\x1b[0m'
 
 // --- INTELLIGENT COMPILER ENGINE FOR VERSION PLACEHOLDERS ---
 const today = new Date().toISOString().split('T')[0]
@@ -134,11 +134,11 @@ const compiledPlaceholderRegex = new RegExp(`^${escapeRegex(config.versionPatter
 const titleRegex = new RegExp(config.titlePattern)
 const prefixEscaped = config.allowedPrefixes.map(escapeRegex).join('|')
 const bulletEscaped = escapeRegex(config.bulletSign)
-const validationRegex = new RegExp(`^${bulletEscaped}(${prefixEscaped})\\s\\S.*$`)
+const validationRegex = new RegExp(`^${bulletEscaped}(${prefixEscaped})\\s.*$`)
 
-const knownCommands = ['init', 'bullet', 'release', 'validate', 'get-version', 'get-release-notes']
+const knownCommands = ['init', 'bullet', 'release', 'next', 'validate', 'get-version', 'get-release-notes']
 if (command && !knownCommands.includes(command)) {
-  console.error(`${RED}flatlog Error: Unknown command "${command}". Run "flatlog --help" for usage.${RESET}`)
+  console.error(`${RED}Error: Unknown command "${command}". Run "flatlog --help" for usage.${RESET}`)
   process.exit(1)
 }
 
@@ -148,7 +148,7 @@ if (command === 'init') {
   const destinationPath = path.resolve(process.cwd(), targetFile)
 
   if (fs.existsSync(destinationPath)) {
-    console.error(`${RED}flatlog Error: A file named "${targetFile}" already exists.${RESET}`)
+    console.error(`${RED}Error: A file named "${targetFile}" already exists.${RESET}`)
     process.exit(1)
   }
 
@@ -172,7 +172,6 @@ if (command === 'init') {
   const boilerplate = `# ${customTitle}
 
 ${livePlaceholderText}
-${config.allowedPrefixes.map(p => `${config.bulletSign}${p}${p === config.allowedPrefixes[0] ? ' Setup layout configuration tracking bounds.' : ''}`).join('\n')}
 
 ${liveInitialReleaseHeader}
 ${assembledInitialRelease}
@@ -183,7 +182,7 @@ ${assembledInitialRelease}
     console.log(`\n${GREEN}✔ Success:${RESET} Spawned clean "${targetFile}"!`)
     process.exit(0)
   } catch (error) {
-    console.error(`${RED}flatlog Error: Failed to write files.${RESET} ${error.message}`)
+    console.error(`${RED}Error: Failed to write file. ${error.message}${RESET}`)
     process.exit(1)
   }
 }
@@ -200,19 +199,19 @@ const filePath = path.resolve(process.cwd(), targetFile)
 // --- COMMAND: BULLET ---
 if (command === 'bullet') {
   if (!fs.existsSync(filePath)) {
-    console.error(`${RED}flatlog Error: "${targetFile}" does not exist. Run "flatlog init" first.${RESET}`)
+    console.error(`${RED}Error: "${targetFile}" does not exist. Run "flatlog init" first.${RESET}`)
     process.exit(1)
   }
 
   const bulletText = positionalArgs[0]
   if (!bulletText) {
-    console.error(`${RED}flatlog Error: Bullet text required. Usage: flatlog bullet "Fixed: typo"${RESET}`)
+    console.error(`${RED}Error: Bullet text required. Usage: flatlog bullet "Fixed: typo"${RESET}`)
     process.exit(1)
   }
 
   const bulletLine = `${config.bulletSign}${bulletText}`
   if (!validationRegex.test(bulletLine)) {
-    console.error(`${RED}flatlog Error: Invalid prefix. Allowed: ${config.allowedPrefixes.join(', ')}${RESET}`)
+    console.error(`${RED}Error: Invalid prefix. Allowed: ${config.allowedPrefixes.join(', ')}${RESET}`)
     process.exit(1)
   }
 
@@ -223,19 +222,18 @@ if (command === 'bullet') {
 
   if (placeholderIdx !== -1) {
     fileLines.splice(placeholderIdx + 1, 0, bulletLine)
-    if (!isDryRun) console.log(`${GREEN}✔ flatlog:${RESET} Appended bullet under the active placeholder line.`)
   } else {
     const titleIdx = fileLines.findIndex(line => titleRegex.test(line.trim()))
     const injectionBlock = ['', livePlaceholderText, bulletLine]
     const targetInsertIdx = titleIdx !== -1 ? titleIdx + 1 : 0
     fileLines.splice(targetInsertIdx, 0, ...injectionBlock)
-    if (!isDryRun) console.log(`${GREEN}✔ flatlog:${RESET} Generated and inserted active development pattern block into file.`)
   }
 
   if (isDryRun) {
     process.stdout.write(fileLines.join('\n'))
   } else {
     fs.writeFileSync(filePath, fileLines.join('\n'), 'utf8')
+    console.log(`${GREEN}✔${RESET} Bullet added.`)
   }
   process.exit(0)
 }
@@ -244,17 +242,17 @@ if (command === 'bullet') {
 if (command === 'release') {
   const releaseVersion = positionalArgs[0]
   if (!releaseVersion) {
-    console.error(`${RED}flatlog Error: Version argument required. Usage: flatlog release <version>${RESET}`)
+    console.error(`${RED}Error: Version argument required. Usage: flatlog release <version>${RESET}`)
     process.exit(1)
   }
 
   if (!/^\d+\.\d+\.\d+$/.test(releaseVersion)) {
-    console.error(`${RED}flatlog Error: Invalid version "${releaseVersion}". Expected format: X.Y.Z${RESET}`)
+    console.error(`${RED}Error: Invalid version "${releaseVersion}". Expected format: X.Y.Z${RESET}`)
     process.exit(1)
   }
 
   if (!fs.existsSync(filePath)) {
-    console.error(`${RED}flatlog Error: "${targetFile}" not found. Run "flatlog init" first.${RESET}`)
+    console.error(`${RED}Error: "${targetFile}" not found. Run "flatlog init" first.${RESET}`)
     process.exit(1)
   }
 
@@ -263,7 +261,7 @@ if (command === 'release') {
 
   const placeholderIdx = releaseLines.findIndex(line => compiledPlaceholderRegex.test(line.trim()))
   if (placeholderIdx === -1) {
-    console.error(`${RED}flatlog Error: No placeholder found. Add a placeholder block first.${RESET}`)
+    console.error(`${RED}Error: No placeholder found. Add a placeholder block first.${RESET}`)
     process.exit(1)
   }
 
@@ -272,7 +270,7 @@ if (command === 'release') {
     return m && m[1] === releaseVersion
   })
   if (alreadyExists) {
-    console.error(`${RED}flatlog Error: Version ${releaseVersion} already exists in "${targetFile}".${RESET}`)
+    console.error(`${RED}Error: Version ${releaseVersion} already exists in "${targetFile}".${RESET}`)
     process.exit(1)
   }
 
@@ -287,12 +285,41 @@ if (command === 'release') {
   process.exit(0)
 }
 
+// --- COMMAND: NEXT ---
+if (command === 'next') {
+  if (!fs.existsSync(filePath)) {
+    console.error(`${RED}Error: "${targetFile}" not found. Run "flatlog init" first.${RESET}`)
+    process.exit(1)
+  }
+
+  const nextContent = fs.readFileSync(filePath, 'utf8')
+  const nextLines = nextContent.split(/\r?\n/)
+
+  const existingPlaceholder = nextLines.findIndex(line => compiledPlaceholderRegex.test(line.trim()))
+  if (existingPlaceholder !== -1) {
+    console.error(`${RED}Error: An unreleased block already exists. Use "flatlog bullet" to add entries.${RESET}`)
+    process.exit(1)
+  }
+
+  const titleIdx = nextLines.findIndex(line => titleRegex.test(line.trim()))
+  const insertAt = titleIdx !== -1 ? titleIdx + 1 : 0
+  nextLines.splice(insertAt, 0, '', livePlaceholderText, `${config.bulletSign}${config.allowedPrefixes[0]} `)
+
+  if (isDryRun) {
+    process.stdout.write(nextLines.join('\n'))
+  } else {
+    fs.writeFileSync(filePath, nextLines.join('\n'), 'utf8')
+    console.log(`${GREEN}✔${RESET} Unreleased block added.`)
+  }
+  process.exit(0)
+}
+
 // --- PIPELINE: DATA PARSING & ANALYTICS STREAM ENGINE ---
 if (!fs.existsSync(filePath)) {
   if (isJsonMode) {
-    console.log(JSON.stringify({ success: false, errors: [{ line: 0, message: 'Target changelog file not found.' }], warnings: [] }))
+    console.log(JSON.stringify({ success: false, errors: [{ line: 0, message: `"${targetFile}" not found.` }], warnings: [] }))
   } else {
-    console.error(`${RED}flatlog Error: Target file not found at: ${filePath}${RESET}`)
+    console.error(`${RED}Error: "${targetFile}" not found.${RESET}`)
   }
   process.exit(1)
 }
@@ -323,21 +350,21 @@ lines.forEach((rawLine, index) => {
   if (!line) return
 
   if (titleRegex.test(line)) {
-    if (titleFound) report.errors.push({ line: lineNum, message: 'Duplicate layout title block found.' })
+    if (titleFound) report.errors.push({ line: lineNum, message: 'Duplicate title found.' })
     titleFound = true
     return
   }
 
   if (rawLine.startsWith('  ') || rawLine.startsWith('\t')) {
     if (line.startsWith(config.bulletSign)) {
-      report.errors.push({ line: lineNum, message: 'Banned indentation layout detected! flatlog strictly requires completely flat lists.' })
+      report.errors.push({ line: lineNum, message: 'Indented bullets are not allowed. Use flat lists only.' })
       return
     }
   }
 
   if (compiledPlaceholderRegex.test(line)) {
     if (versionsFound.length > 0 || currentVersion) {
-      report.errors.push({ line: lineNum, message: 'The active development placeholder line must strictly reside at the top.' })
+      report.errors.push({ line: lineNum, message: 'Unreleased block must be at the top of the changelog.' })
     }
     currentVersion = 'placeholder'
     report.internal.hasPlaceholder = true
@@ -351,7 +378,7 @@ lines.forEach((rawLine, index) => {
     if (!report.metadata.topmostVersion) report.metadata.topmostVersion = extractedVersion
 
     if (isNaN(new Date(extractedDate))) {
-      report.errors.push({ line: lineNum, message: `Invalid date "${extractedDate}" is not a real calendar date.` })
+      report.errors.push({ line: lineNum, message: `Invalid date: ${extractedDate}` })
     }
 
     if (currentVersion && currentVersion !== 'placeholder') {
@@ -359,16 +386,16 @@ lines.forEach((rawLine, index) => {
       const [oMajor, oMinor, oPatch] = currentVersion.split('.').map(Number)
       const isOlder = nMajor !== oMajor ? nMajor < oMajor : (nMinor !== oMinor ? nMinor < oMinor : nPatch < oPatch)
       if (!isOlder) {
-        report.errors.push({ line: lineNum, message: `Chronological ordering crash. Version ${extractedVersion} cannot follow version ${currentVersion}.` })
+        report.errors.push({ line: lineNum, message: `Version ${extractedVersion} is out of order (should come before ${currentVersion}).` })
       }
 
       if (currentVersionDate && !isNaN(new Date(extractedDate)) && new Date(extractedDate) > new Date(currentVersionDate)) {
-        report.warnings.push({ line: lineNum, message: `Date "${extractedDate}" is newer than previous version date "${currentVersionDate}". Date order contradicts version order.` })
+        report.warnings.push({ line: lineNum, message: `Date ${extractedDate} is newer than ${currentVersionDate} but the version is older.` })
       }
     }
 
     if (versionsFound.includes(extractedVersion)) {
-      report.errors.push({ line: lineNum, message: `Duplicate release entry detected for version ${extractedVersion}.` })
+      report.errors.push({ line: lineNum, message: `Version ${extractedVersion} is listed more than once.` })
     }
 
     currentVersion = extractedVersion
@@ -379,7 +406,7 @@ lines.forEach((rawLine, index) => {
 
   if (line.startsWith(config.bulletSign)) {
     if (!currentVersion) {
-      report.errors.push({ line: lineNum, message: 'Floating block element found before a structural version header was initialized.' })
+      report.errors.push({ line: lineNum, message: 'Bullet found before any version header.' })
       return
     }
 
@@ -387,20 +414,20 @@ lines.forEach((rawLine, index) => {
     const isValidPrefix = validationRegex.test(line)
 
     if (!isValidPrefix && !isInitialRelease) {
-      report.errors.push({ line: lineNum, message: `Invalid entry content prefix layout. Must match rules or use: ${config.allowedPrefixes.join(', ')}` })
+      report.errors.push({ line: lineNum, message: `Invalid prefix. Allowed: ${config.allowedPrefixes.join(', ')}` })
     }
 
     if (line.length > config.maxLineLength) {
-      report.warnings.push({ line: lineNum, message: `Entry is long (${line.length} characters). Truncate to match your configured limit of ${config.maxLineLength}.` })
+      report.warnings.push({ line: lineNum, message: `Line too long (${line.length} chars, max ${config.maxLineLength}).` })
     }
     return
   }
 
   if (!titleFound && index === 0) {
-    report.errors.push({ line: lineNum, message: 'File stream must begin with a valid structural title header.' })
+    report.errors.push({ line: lineNum, message: 'File must start with a valid title.' })
   } else {
     if (!titleRegex.test(line) && !compiledVersionRegex.test(line) && !compiledPlaceholderRegex.test(line) && !line.startsWith(config.bulletSign)) {
-      report.errors.push({ line: lineNum, message: 'Unidentified data structure noise parsed.' })
+      report.errors.push({ line: lineNum, message: 'Unexpected content.' })
     }
   }
 })
@@ -409,9 +436,9 @@ report.metadata.releasesChecked = versionsFound.length
 
 if (isStrict && expectedVersion) {
   if (report.internal.hasPlaceholder) {
-    report.errors.push({ line: 0, message: `Strict enforcement failure: Active layout development placeholder "${livePlaceholderText}" is blocking release.` })
+    report.errors.push({ line: 0, message: 'Unreleased block found. Run "flatlog release <version>" before publishing.' })
   } else if (report.metadata.topmostVersion && expectedVersion !== report.metadata.topmostVersion) {
-    report.errors.push({ line: 0, message: `Strict version mismatch: Target environment requires "${expectedVersion}" but found "${report.metadata.topmostVersion}".` })
+    report.errors.push({ line: 0, message: `Version mismatch: package.json has ${expectedVersion} but changelog has ${report.metadata.topmostVersion}.` })
   }
 }
 
@@ -463,21 +490,19 @@ if (isJsonMode) {
   process.exit(report.success ? 0 : 1)
 }
 
-if (!isQuiet) console.log('\n--- flatlog Verification Report ---')
-report.errors.forEach(e => console.error(`${RED}Line ${e.line}:${RESET} ${e.message}`))
-report.warnings.forEach(w => console.warn(`${YELLOW}Line ${w.line} Warning:${RESET} ${w.message}`))
+report.errors.forEach(e => console.error(`${RED}${targetFile}${e.line ? `:${e.line}` : ''}: error: ${e.message}${RESET}`))
+report.warnings.forEach(w => console.warn(`${YELLOW}${targetFile}${w.line ? `:${w.line}` : ''}: warning: ${w.message}${RESET}`))
 
 if (!report.success) {
-  console.error(`\n❌ ${RED}Validation Failed:${RESET} Correct formatting issues tracked above.\n`)
   process.exit(1)
 } else if (report.metadata.releasesChecked === 0 && currentVersion !== 'placeholder') {
-  if (!isQuiet) console.warn(`⚠️  ${YELLOW}Verification Incomplete:${RESET} Structure valid, but no stable release chunks parsed.\n`)
+  if (!isQuiet) console.warn(`${YELLOW}No releases found.${RESET}`)
   process.exit(0)
 } else {
   if (!isQuiet) {
-    let contextMeta = `(${report.metadata.releasesChecked} stable releases confirmed)`
-    if (isStrict && expectedVersion) contextMeta += ` [Strict matched with version ${expectedVersion}]`
-    console.log(`✔ ${GREEN}Success:${RESET} "${targetFile}" matches flat specifications perfectly! ${contextMeta}\n`)
+    let contextMeta = `${report.metadata.releasesChecked} release${report.metadata.releasesChecked !== 1 ? 's' : ''}`
+    if (isStrict && expectedVersion) contextMeta += `, strict v${expectedVersion}`
+    console.log(`${GREEN}✔${RESET} Valid (${contextMeta})`)
   }
   process.exit(0)
 }
