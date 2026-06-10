@@ -66,7 +66,7 @@ const assembledInitialRelease = `${config.bulletSign}${config.initialReleaseText
 const defaultBulletText = `${config.bulletSign}${config.allowedPrefixes[0]} `
 
 // Compile high-fidelity regular expressions for tracking/validation loops
-const escapedTemplateBase = escapeRegex(config.versionPattern).replace('YYYY-MM-DD', '\\d{4}-\\d{2}-\\d{2}')
+const escapedTemplateBase = escapeRegex(config.versionPattern).replace('YYYY\\-MM\\-DD', '\\d{4}-\\d{2}-\\d{2}')
 const compiledVersionRegex = new RegExp(`^${escapedTemplateBase.replace('\\{\\{version\\}\\}', '(\\d+\\.\\d+\\.\\d+)')}$`)
 const compiledPlaceholderRegex = new RegExp(`^${escapeRegex(config.versionPattern).replace('\\{\\{version\\}\\}', escapeRegex(universalToken))}$`)
 
