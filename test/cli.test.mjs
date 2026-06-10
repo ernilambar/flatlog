@@ -85,7 +85,7 @@ describe('flatlog init', () => {
   })
 
   it('creates custom filename when specified', async () => {
-    const result = await runCli(['init', 'CHANGES.md'], { cwd: testDir })
+    const result = await runCli(['init', '--file', 'CHANGES.md'], { cwd: testDir })
     assert.strictEqual(result.code, 0)
     assert(fs.existsSync(path.join(testDir, 'CHANGES.md')))
     assert(!fs.existsSync(path.join(testDir, 'CHANGELOG.md')))
@@ -299,6 +299,21 @@ describe('flatlog get-release-notes', () => {
 
   it('exits 1 when file not found', async () => {
     const result = await runCli(['get-release-notes'], { cwd: testDir })
+    assert.strictEqual(result.code, 1)
+  })
+
+  it('prints notes for a specific version argument', async () => {
+    const multi = '# Test Changelog\n\n## 2.0.0 - 2024-06-01\n- Added: New feature.\n\n## 1.0.0 - 2024-01-01\n- Initial release.\n'
+    fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), multi)
+    const result = await runCli(['get-release-notes', '1.0.0'], { cwd: testDir })
+    assert.strictEqual(result.code, 0)
+    assert.match(result.stdout, /Initial release/)
+    assert(!result.stdout.includes('New feature'))
+  })
+
+  it('exits 1 when specified version is not found', async () => {
+    fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), VALID_CHANGELOG)
+    const result = await runCli(['get-release-notes', '9.9.9'], { cwd: testDir })
     assert.strictEqual(result.code, 1)
   })
 })
