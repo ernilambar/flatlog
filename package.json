@@ -28,13 +28,14 @@
   },
   "scripts": {
     "lint": "standard",
-    "lint:fix": "standard --fix"
+    "lint:fix": "standard --fix",
+    "test": "node --test"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=20"
   },
   "devDependencies": {
-    "standard": "*"
+    "standard": "^17.1.2"
   },
   "publishConfig": {
     "access": "public"
