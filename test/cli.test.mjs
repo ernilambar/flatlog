@@ -455,6 +455,81 @@ describe('flatlog get-version', () => {
   })
 })
 
+describe('flatlog validate --strict', () => {
+  let testDir
+
+  beforeEach(() => { testDir = tmpTestDir('strict') })
+  afterEach(() => { fs.rmSync(testDir, { recursive: true }) })
+
+  it('exits 0 when topmost version matches package.json version', async () => {
+    fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), VALID_CHANGELOG)
+    fs.writeFileSync(path.join(testDir, 'package.json'), JSON.stringify({ version: '1.0.0' }))
+    const result = await runCli(['validate', '--strict'], { cwd: testDir })
+    assert.strictEqual(result.code, 0)
+  })
+
+  it('exits 1 when topmost version does not match package.json version', async () => {
+    fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), VALID_CHANGELOG)
+    fs.writeFileSync(path.join(testDir, 'package.json'), JSON.stringify({ version: '2.0.0' }))
+    const result = await runCli(['validate', '--strict'], { cwd: testDir })
+    assert.strictEqual(result.code, 1)
+    assert.match(result.stderr, /[Ss]trict/)
+  })
+
+  it('exits 1 when placeholder is present in strict mode', async () => {
+    fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), CHANGELOG_WITH_PLACEHOLDER)
+    fs.writeFileSync(path.join(testDir, 'package.json'), JSON.stringify({ version: '1.0.0' }))
+    const result = await runCli(['validate', '--strict'], { cwd: testDir })
+    assert.strictEqual(result.code, 1)
+    assert.match(result.stderr, /[Ss]trict|placeholder/)
+  })
+
+  it('--json strict mode reports version mismatch in errors', async () => {
+    fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), VALID_CHANGELOG)
+    fs.writeFileSync(path.join(testDir, 'package.json'), JSON.stringify({ version: '9.9.9' }))
+    const result = await runCli(['validate', '--strict', '--json'], { cwd: testDir })
+    assert.strictEqual(result.code, 1)
+    const parsed = JSON.parse(result.stdout)
+    assert.strictEqual(parsed.success, false)
+    assert(parsed.errors.some(e => /[Ss]trict|mismatch/.test(e.message)))
+  })
+})
+
+describe('flatlog unknown command', () => {
+  it('exits 1 with error message for unknown command', async () => {
+    const result = await runCli(['foobar'])
+    assert.strictEqual(result.code, 1)
+    assert.match(result.stderr, /Unknown command/)
+  })
+})
+
+describe('flatlog release semver validation', () => {
+  let testDir
+
+  beforeEach(() => { testDir = tmpTestDir('release-semver') })
+  afterEach(() => { fs.rmSync(testDir, { recursive: true }) })
+
+  it('exits 1 for non-semver version argument', async () => {
+    fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), CHANGELOG_WITH_PLACEHOLDER)
+    const result = await runCli(['release', 'not-a-version'], { cwd: testDir })
+    assert.strictEqual(result.code, 1)
+    assert.match(result.stderr, /[Ii]nvalid version/)
+  })
+
+  it('exits 1 for partial semver like "1.0"', async () => {
+    fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), CHANGELOG_WITH_PLACEHOLDER)
+    const result = await runCli(['release', '1.0'], { cwd: testDir })
+    assert.strictEqual(result.code, 1)
+    assert.match(result.stderr, /[Ii]nvalid version/)
+  })
+
+  it('exits 0 for valid semver', async () => {
+    fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), CHANGELOG_WITH_PLACEHOLDER)
+    const result = await runCli(['release', '1.1.0'], { cwd: testDir })
+    assert.strictEqual(result.code, 0)
+  })
+})
+
 describe('flatlog get-release-notes', () => {
   let testDir
 
