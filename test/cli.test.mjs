@@ -35,7 +35,7 @@ function tmpTestDir (prefix) {
 const VALID_CHANGELOG = `# Test Changelog
 
 ## 1.0.0 - 2024-01-01
-- Initial release.
+- Initial release
 `
 
 const CHANGELOG_WITH_PLACEHOLDER = `# Test Changelog
@@ -44,7 +44,7 @@ const CHANGELOG_WITH_PLACEHOLDER = `# Test Changelog
 - Added: Setup layout configuration tracking bounds.
 
 ## 1.0.0 - 2024-01-01
-- Initial release.
+- Initial release
 `
 
 describe('config schema validation', () => {
@@ -66,7 +66,7 @@ describe('config schema validation', () => {
     fs.writeFileSync(path.join(testDir, '.flatlogrc.json'), JSON.stringify({ maxLineLength: 'wide' }))
     const result = await runCli(['validate'], { cwd: testDir })
     assert.strictEqual(result.code, 0)
-    assert.match(result.stderr, /maxLineLength.*must be number/)
+    assert.match(result.stderr, /maxLineLength.*expects number/)
   })
 
   it('accepts valid config overrides without warnings', async () => {
@@ -196,39 +196,39 @@ describe('flatlog validate', () => {
   })
 
   it('exits 1 for indented bullet items', async () => {
-    const indented = '# Test Changelog\n\n## 1.0.0 - 2024-01-01\n  - Initial release.\n'
+    const indented = '# Test Changelog\n\n## 1.0.0 - 2024-01-01\n  - Initial release\n'
     fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), indented)
     const result = await runCli(['validate', '--json'], { cwd: testDir })
     const parsed = JSON.parse(result.stdout)
     assert.strictEqual(parsed.success, false)
-    assert(parsed.errors.some(e => /indentation/.test(e.message)))
+    assert(parsed.errors.some(e => /[Ii]ndent/.test(e.message)))
   })
 
   it('exits 1 for duplicate version entries', async () => {
-    const duped = '# Test Changelog\n\n## 1.0.0 - 2024-01-01\n- Initial release.\n\n## 1.0.0 - 2024-01-01\n- Initial release.\n'
+    const duped = '# Test Changelog\n\n## 1.0.0 - 2024-01-01\n- Initial release\n\n## 1.0.0 - 2024-01-01\n- Initial release\n'
     fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), duped)
     const result = await runCli(['validate', '--json'], { cwd: testDir })
     const parsed = JSON.parse(result.stdout)
     assert.strictEqual(parsed.success, false)
-    assert(parsed.errors.some(e => /[Dd]uplicate/.test(e.message)))
+    assert(parsed.errors.some(e => /[Dd]uplicate|more than once/.test(e.message)))
   })
 
   it('exits 1 for out-of-order versions', async () => {
-    const outOfOrder = '# Test Changelog\n\n## 1.0.0 - 2024-01-01\n- Initial release.\n\n## 2.0.0 - 2024-06-01\n- Added: Something new.\n'
+    const outOfOrder = '# Test Changelog\n\n## 1.0.0 - 2024-01-01\n- Initial release\n\n## 2.0.0 - 2024-06-01\n- Added: Something new.\n'
     fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), outOfOrder)
     const result = await runCli(['validate', '--json'], { cwd: testDir })
     const parsed = JSON.parse(result.stdout)
     assert.strictEqual(parsed.success, false)
-    assert(parsed.errors.some(e => /[Cc]hronological|ordering/.test(e.message)))
+    assert(parsed.errors.some(e => /out of order/.test(e.message)))
   })
 
   it('exits 1 for an invalid calendar date', async () => {
-    const badDate = '# Test Changelog\n\n## 1.0.0 - 2024-13-45\n- Initial release.\n'
+    const badDate = '# Test Changelog\n\n## 1.0.0 - 2024-13-45\n- Initial release\n'
     fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), badDate)
     const result = await runCli(['validate', '--json'], { cwd: testDir })
     const parsed = JSON.parse(result.stdout)
     assert.strictEqual(parsed.success, false)
-    assert(parsed.errors.some(e => /calendar/.test(e.message)))
+    assert(parsed.errors.some(e => /[Ii]nvalid date/.test(e.message)))
   })
 
   it('exits 0 for a valid calendar date', async () => {
@@ -245,11 +245,11 @@ describe('flatlog validate', () => {
     const result = await runCli(['validate', '--json'], { cwd: testDir })
     const parsed = JSON.parse(result.stdout)
     assert.strictEqual(parsed.success, true)
-    assert(parsed.warnings.some(w => /[Dd]ate.*contradicts/.test(w.message)))
+    assert(parsed.warnings.some(w => /newer than/.test(w.message)))
   })
 
   it('does not warn when date order matches version order', async () => {
-    const ordered = '# Test Changelog\n\n## 2.0.0 - 2024-06-01\n- Added: Feature.\n\n## 1.0.0 - 2024-01-01\n- Initial release.\n'
+    const ordered = '# Test Changelog\n\n## 2.0.0 - 2024-06-01\n- Added: Feature.\n\n## 1.0.0 - 2024-01-01\n- Initial release\n'
     fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), ordered)
     const result = await runCli(['validate', '--json'], { cwd: testDir })
     const parsed = JSON.parse(result.stdout)
@@ -435,7 +435,7 @@ describe('flatlog get-version', () => {
   })
 
   it('returns the highest (topmost) version from multi-release changelog', async () => {
-    const multi = '# Test Changelog\n\n## 2.0.0 - 2024-06-01\n- Added: New feature.\n\n## 1.0.0 - 2024-01-01\n- Initial release.\n'
+    const multi = '# Test Changelog\n\n## 2.0.0 - 2024-06-01\n- Added: New feature.\n\n## 1.0.0 - 2024-01-01\n- Initial release\n'
     fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), multi)
     const result = await runCli(['get-version'], { cwd: testDir })
     assert.strictEqual(result.code, 0)
@@ -473,7 +473,7 @@ describe('flatlog validate --strict', () => {
     fs.writeFileSync(path.join(testDir, 'package.json'), JSON.stringify({ version: '2.0.0' }))
     const result = await runCli(['validate', '--strict'], { cwd: testDir })
     assert.strictEqual(result.code, 1)
-    assert.match(result.stderr, /[Ss]trict/)
+    assert.match(result.stderr, /[Mm]ismatch/)
   })
 
   it('exits 1 when placeholder is present in strict mode', async () => {
@@ -481,7 +481,7 @@ describe('flatlog validate --strict', () => {
     fs.writeFileSync(path.join(testDir, 'package.json'), JSON.stringify({ version: '1.0.0' }))
     const result = await runCli(['validate', '--strict'], { cwd: testDir })
     assert.strictEqual(result.code, 1)
-    assert.match(result.stderr, /[Ss]trict|placeholder/)
+    assert.match(result.stderr, /[Uu]nreleased/)
   })
 
   it('--json strict mode reports version mismatch in errors', async () => {
@@ -544,7 +544,7 @@ describe('flatlog get-release-notes', () => {
   })
 
   it('prints only notes for topmost version in multi-release changelog', async () => {
-    const multi = '# Test Changelog\n\n## 2.0.0 - 2024-06-01\n- Added: New feature.\n\n## 1.0.0 - 2024-01-01\n- Initial release.\n'
+    const multi = '# Test Changelog\n\n## 2.0.0 - 2024-06-01\n- Added: New feature.\n\n## 1.0.0 - 2024-01-01\n- Initial release\n'
     fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), multi)
     const result = await runCli(['get-release-notes'], { cwd: testDir })
     assert.strictEqual(result.code, 0)
@@ -565,7 +565,7 @@ describe('flatlog get-release-notes', () => {
   })
 
   it('prints notes for a specific version argument', async () => {
-    const multi = '# Test Changelog\n\n## 2.0.0 - 2024-06-01\n- Added: New feature.\n\n## 1.0.0 - 2024-01-01\n- Initial release.\n'
+    const multi = '# Test Changelog\n\n## 2.0.0 - 2024-06-01\n- Added: New feature.\n\n## 1.0.0 - 2024-01-01\n- Initial release\n'
     fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), multi)
     const result = await runCli(['get-release-notes', '1.0.0'], { cwd: testDir })
     assert.strictEqual(result.code, 0)
