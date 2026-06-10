@@ -20,6 +20,7 @@
   "author": "Nilambar Sharma",
   "files": [
     "bin",
+    "CHANGELOG.md",
     "README.md",
     "LICENSE"
   ],

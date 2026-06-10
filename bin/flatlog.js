@@ -136,6 +136,12 @@ const prefixEscaped = config.allowedPrefixes.map(escapeRegex).join('|')
 const bulletEscaped = escapeRegex(config.bulletSign)
 const validationRegex = new RegExp(`^${bulletEscaped}(${prefixEscaped})\\s\\S.*$`)
 
+const knownCommands = ['init', 'bullet', 'release', 'validate', 'get-version', 'get-release-notes']
+if (command && !knownCommands.includes(command)) {
+  console.error(`${RED}flatlog Error: Unknown command "${command}". Run "flatlog --help" for usage.${RESET}`)
+  process.exit(1)
+}
+
 // --- COMMAND: INIT ---
 if (command === 'init') {
   const targetFile = argv.file || 'CHANGELOG.md'
@@ -239,6 +245,11 @@ if (command === 'release') {
   const releaseVersion = positionalArgs[0]
   if (!releaseVersion) {
     console.error(`${RED}flatlog Error: Version argument required. Usage: flatlog release <version>${RESET}`)
+    process.exit(1)
+  }
+
+  if (!/^\d+\.\d+\.\d+$/.test(releaseVersion)) {
+    console.error(`${RED}flatlog Error: Invalid version "${releaseVersion}". Expected format: X.Y.Z${RESET}`)
     process.exit(1)
   }
 
