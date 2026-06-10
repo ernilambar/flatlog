@@ -47,6 +47,37 @@ const CHANGELOG_WITH_PLACEHOLDER = `# Test Changelog
 - Initial release.
 `
 
+describe('config schema validation', () => {
+  let testDir
+
+  beforeEach(() => { testDir = tmpTestDir('config') })
+  afterEach(() => { fs.rmSync(testDir, { recursive: true }) })
+
+  it('warns on unknown config key and still validates successfully', async () => {
+    fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), VALID_CHANGELOG)
+    fs.writeFileSync(path.join(testDir, '.flatlogrc.json'), JSON.stringify({ bulletSigns: '-' }))
+    const result = await runCli(['validate'], { cwd: testDir })
+    assert.strictEqual(result.code, 0)
+    assert.match(result.stderr, /Unknown config key "bulletSigns"/)
+  })
+
+  it('warns on wrong-type config value and falls back to default', async () => {
+    fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), VALID_CHANGELOG)
+    fs.writeFileSync(path.join(testDir, '.flatlogrc.json'), JSON.stringify({ maxLineLength: 'wide' }))
+    const result = await runCli(['validate'], { cwd: testDir })
+    assert.strictEqual(result.code, 0)
+    assert.match(result.stderr, /maxLineLength.*must be number/)
+  })
+
+  it('accepts valid config overrides without warnings', async () => {
+    fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), VALID_CHANGELOG)
+    fs.writeFileSync(path.join(testDir, '.flatlogrc.json'), JSON.stringify({ maxLineLength: 80 }))
+    const result = await runCli(['validate'], { cwd: testDir })
+    assert.strictEqual(result.code, 0)
+    assert(!result.stderr.includes('Warning'))
+  })
+})
+
 describe('flatlog init', () => {
   let testDir
 
@@ -190,47 +221,203 @@ describe('flatlog validate', () => {
     assert.strictEqual(parsed.success, false)
     assert(parsed.errors.some(e => /[Cc]hronological|ordering/.test(e.message)))
   })
+
+  it('exits 1 for an invalid calendar date', async () => {
+    const badDate = '# Test Changelog\n\n## 1.0.0 - 2024-13-45\n- Initial release.\n'
+    fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), badDate)
+    const result = await runCli(['validate', '--json'], { cwd: testDir })
+    const parsed = JSON.parse(result.stdout)
+    assert.strictEqual(parsed.success, false)
+    assert(parsed.errors.some(e => /calendar/.test(e.message)))
+  })
+
+  it('exits 0 for a valid calendar date', async () => {
+    fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), VALID_CHANGELOG)
+    const result = await runCli(['validate', '--json'], { cwd: testDir })
+    const parsed = JSON.parse(result.stdout)
+    assert.strictEqual(parsed.success, true)
+    assert(!parsed.errors.some(e => /calendar/.test(e.message)))
+  })
+
+  it('warns when date order contradicts version order', async () => {
+    const hotfix = '# Test Changelog\n\n## 1.1.0 - 2024-06-01\n- Added: Feature.\n\n## 1.0.1 - 2024-06-15\n- Fixed: Hotfix.\n'
+    fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), hotfix)
+    const result = await runCli(['validate', '--json'], { cwd: testDir })
+    const parsed = JSON.parse(result.stdout)
+    assert.strictEqual(parsed.success, true)
+    assert(parsed.warnings.some(w => /[Dd]ate.*contradicts/.test(w.message)))
+  })
+
+  it('does not warn when date order matches version order', async () => {
+    const ordered = '# Test Changelog\n\n## 2.0.0 - 2024-06-01\n- Added: Feature.\n\n## 1.0.0 - 2024-01-01\n- Initial release.\n'
+    fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), ordered)
+    const result = await runCli(['validate', '--json'], { cwd: testDir })
+    const parsed = JSON.parse(result.stdout)
+    assert.strictEqual(parsed.success, true)
+    assert(!parsed.warnings.some(w => /contradicts/.test(w.message)))
+  })
+
+  it('--quiet suppresses output on success', async () => {
+    fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), VALID_CHANGELOG)
+    const result = await runCli(['validate', '--quiet'], { cwd: testDir })
+    assert.strictEqual(result.code, 0)
+    assert.strictEqual(result.stdout.trim(), '')
+    assert.strictEqual(result.stderr.trim(), '')
+  })
+
+  it('--quiet still prints errors on failure', async () => {
+    fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), 'not a valid changelog\n')
+    const result = await runCli(['validate', '--quiet'], { cwd: testDir })
+    assert.strictEqual(result.code, 1)
+    assert(result.stderr.length > 0)
+  })
+
+  it('--quiet still prints warnings on success', async () => {
+    const hotfix = '# Test Changelog\n\n## 1.1.0 - 2024-06-01\n- Added: Feature.\n\n## 1.0.1 - 2024-06-15\n- Fixed: Hotfix.\n'
+    fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), hotfix)
+    const result = await runCli(['validate', '--quiet'], { cwd: testDir })
+    assert.strictEqual(result.code, 0)
+    assert(result.stderr.length > 0)
+    assert.strictEqual(result.stdout.trim(), '')
+  })
 })
 
-describe('flatlog add', () => {
+describe('flatlog bullet', () => {
   let testDir
 
-  beforeEach(() => { testDir = tmpTestDir('add') })
+  beforeEach(() => { testDir = tmpTestDir('bullet') })
   afterEach(() => { fs.rmSync(testDir, { recursive: true }) })
 
   it('exits 1 if changelog does not exist', async () => {
-    const result = await runCli(['add'], { cwd: testDir })
+    const result = await runCli(['bullet', 'Fixed: typo'], { cwd: testDir })
     assert.strictEqual(result.code, 1)
     assert.match(result.stderr, /does not exist/)
   })
 
-  it('exits 0 on success', async () => {
+  it('exits 1 if no bullet text given', async () => {
     fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), VALID_CHANGELOG)
-    const result = await runCli(['add'], { cwd: testDir })
+    const result = await runCli(['bullet'], { cwd: testDir })
+    assert.strictEqual(result.code, 1)
+    assert.match(result.stderr, /Bullet text required/)
+  })
+
+  it('exits 1 if prefix is invalid', async () => {
+    fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), CHANGELOG_WITH_PLACEHOLDER)
+    const result = await runCli(['bullet', 'Blah: typo'], { cwd: testDir })
+    assert.strictEqual(result.code, 1)
+    assert.match(result.stderr, /Invalid prefix/)
+  })
+
+  it('exits 0 on success', async () => {
+    fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), CHANGELOG_WITH_PLACEHOLDER)
+    const result = await runCli(['bullet', 'Fixed: typo'], { cwd: testDir })
     assert.strictEqual(result.code, 0)
   })
 
   it('inserts placeholder block when none exists', async () => {
     fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), VALID_CHANGELOG)
-    await runCli(['add'], { cwd: testDir })
+    await runCli(['bullet', 'Changed: something'], { cwd: testDir })
     const content = fs.readFileSync(path.join(testDir, 'CHANGELOG.md'), 'utf8')
     assert.match(content, /## X\.X\.X - YYYY-MM-DD/)
   })
 
-  it('adds bullet line under existing placeholder', async () => {
+  it('inserts correct bullet text under existing placeholder', async () => {
     fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), CHANGELOG_WITH_PLACEHOLDER)
-    await runCli(['add'], { cwd: testDir })
+    await runCli(['bullet', 'Fixed: typo'], { cwd: testDir })
     const lines = fs.readFileSync(path.join(testDir, 'CHANGELOG.md'), 'utf8').split('\n')
     const placeholderIdx = lines.findIndex(l => l.includes('X.X.X'))
-    assert(lines[placeholderIdx + 1].startsWith('- Added: '))
+    assert.strictEqual(lines[placeholderIdx + 1], '- Fixed: typo')
   })
 
-  it('preserves existing release entries after adding', async () => {
+  it('preserves existing release entries after inserting', async () => {
     fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), VALID_CHANGELOG)
-    await runCli(['add'], { cwd: testDir })
+    await runCli(['bullet', 'Added: new thing'], { cwd: testDir })
     const content = fs.readFileSync(path.join(testDir, 'CHANGELOG.md'), 'utf8')
     assert.match(content, /## 1\.0\.0 - 2024-01-01/)
     assert.match(content, /Initial release/)
+  })
+})
+
+describe('flatlog release', () => {
+  let testDir
+
+  beforeEach(() => { testDir = tmpTestDir('release') })
+  afterEach(() => { fs.rmSync(testDir, { recursive: true }) })
+
+  it('exits 1 if no version argument given', async () => {
+    fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), CHANGELOG_WITH_PLACEHOLDER)
+    const result = await runCli(['release'], { cwd: testDir })
+    assert.strictEqual(result.code, 1)
+    assert.match(result.stderr, /Version argument required/)
+  })
+
+  it('exits 1 if file not found', async () => {
+    const result = await runCli(['release', '1.1.0'], { cwd: testDir })
+    assert.strictEqual(result.code, 1)
+    assert.match(result.stderr, /not found/)
+  })
+
+  it('exits 1 if no placeholder exists', async () => {
+    fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), VALID_CHANGELOG)
+    const result = await runCli(['release', '2.0.0'], { cwd: testDir })
+    assert.strictEqual(result.code, 1)
+    assert.match(result.stderr, /No placeholder found/)
+  })
+
+  it('exits 1 if version already exists', async () => {
+    fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), CHANGELOG_WITH_PLACEHOLDER)
+    const result = await runCli(['release', '1.0.0'], { cwd: testDir })
+    assert.strictEqual(result.code, 1)
+    assert.match(result.stderr, /already exists/)
+  })
+
+  it('exits 0 and prints new header on success', async () => {
+    fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), CHANGELOG_WITH_PLACEHOLDER)
+    const result = await runCli(['release', '2.1.0'], { cwd: testDir })
+    assert.strictEqual(result.code, 0)
+    assert.match(result.stdout, /## 2\.1\.0 - \d{4}-\d{2}-\d{2}/)
+  })
+
+  it('replaces placeholder with versioned header in file', async () => {
+    fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), CHANGELOG_WITH_PLACEHOLDER)
+    await runCli(['release', '2.1.0'], { cwd: testDir })
+    const content = fs.readFileSync(path.join(testDir, 'CHANGELOG.md'), 'utf8')
+    assert.doesNotMatch(content, /X\.X\.X/)
+    assert.match(content, /## 2\.1\.0 - \d{4}-\d{2}-\d{2}/)
+  })
+
+  it('preserves existing bullets after promotion', async () => {
+    fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), CHANGELOG_WITH_PLACEHOLDER)
+    await runCli(['release', '2.1.0'], { cwd: testDir })
+    const content = fs.readFileSync(path.join(testDir, 'CHANGELOG.md'), 'utf8')
+    assert.match(content, /Setup layout configuration tracking bounds/)
+    assert.match(content, /## 1\.0\.0 - 2024-01-01/)
+    assert.match(content, /Initial release/)
+  })
+
+  it('--dry-run prints modified content without writing file', async () => {
+    fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), CHANGELOG_WITH_PLACEHOLDER)
+    const result = await runCli(['release', '2.1.0', '--dry-run'], { cwd: testDir })
+    assert.strictEqual(result.code, 0)
+    assert.match(result.stdout, /## 2\.1\.0 - \d{4}-\d{2}-\d{2}/)
+    const content = fs.readFileSync(path.join(testDir, 'CHANGELOG.md'), 'utf8')
+    assert.match(content, /## X\.X\.X - YYYY-MM-DD/)
+  })
+})
+
+describe('flatlog bullet --dry-run', () => {
+  let testDir
+
+  beforeEach(() => { testDir = tmpTestDir('bullet-dry') })
+  afterEach(() => { fs.rmSync(testDir, { recursive: true }) })
+
+  it('prints modified content without writing file', async () => {
+    fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), CHANGELOG_WITH_PLACEHOLDER)
+    const result = await runCli(['bullet', 'Fixed: typo', '--dry-run'], { cwd: testDir })
+    assert.strictEqual(result.code, 0)
+    assert.match(result.stdout, /- Fixed: typo/)
+    const content = fs.readFileSync(path.join(testDir, 'CHANGELOG.md'), 'utf8')
+    assert(!content.includes('Fixed: typo'))
   })
 })
 

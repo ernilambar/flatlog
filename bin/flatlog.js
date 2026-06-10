@@ -25,11 +25,35 @@ const defaultConfig = {
 }
 
 // 2. Load Configuration Overrides if Present
+const configSchema = {
+  titlePattern: 'string',
+  versionPattern: 'string',
+  bulletSign: 'string',
+  allowedPrefixes: 'array',
+  initialReleaseText: 'string',
+  maxLineLength: 'number'
+}
+
 let config = { ...defaultConfig }
 const configPath = path.resolve(process.cwd(), '.flatlogrc.json')
 if (fs.existsSync(configPath)) {
   try {
-    config = { ...defaultConfig, ...JSON.parse(fs.readFileSync(configPath, 'utf8')) }
+    const raw = JSON.parse(fs.readFileSync(configPath, 'utf8'))
+    const validated = {}
+    for (const [key, value] of Object.entries(raw)) {
+      if (!(key in configSchema)) {
+        console.warn(`\x1b[33mflatlog Warning: Unknown config key "${key}" ignored.\x1b[0m`)
+        continue
+      }
+      const expected = configSchema[key]
+      const actual = Array.isArray(value) ? 'array' : typeof value
+      if (actual !== expected) {
+        console.warn(`\x1b[33mflatlog Warning: Config key "${key}" must be ${expected}, got ${actual}. Using default.\x1b[0m`)
+        continue
+      }
+      validated[key] = value
+    }
+    config = { ...defaultConfig, ...validated }
   } catch (e) {
     console.warn('\x1b[33mflatlog Warning: Malformed .flatlogrc.json found. Falling back to defaults.\x1b[0m')
   }
@@ -37,7 +61,7 @@ if (fs.existsSync(configPath)) {
 
 // 3. Process CLI Parameters
 const argv = minimist(process.argv.slice(2), {
-  boolean: ['json', 'strict', 'help', 'version'],
+  boolean: ['json', 'strict', 'quiet', 'dry-run', 'help', 'version'],
   string: ['file'],
   alias: { f: 'file' }
 })
@@ -45,6 +69,8 @@ const command = argv._[0]
 
 const isJsonMode = argv.json
 const isStrict = argv.strict
+const isQuiet = argv.quiet
+const isDryRun = argv['dry-run']
 const positionalArgs = argv._
 
 if (argv.version) {
@@ -59,7 +85,8 @@ Usage: flatlog <command> [options]
 
 Commands:
   init                   Create a new changelog
-  add                    Insert a placeholder block or bullet item
+  bullet "<Prefix: text>" Insert a bullet item (e.g. "Fixed: typo")
+  release <version>      Promote placeholder to a versioned release header
   validate               Validate changelog structure
   get-version            Print the topmost stable version
   get-release-notes      Print bullet notes for the latest release
@@ -69,6 +96,8 @@ Options:
   --file, -f <file>      Target changelog file (default: CHANGELOG.md)
   --strict               Enforce version match against package.json
   --json                 Output results as JSON (validate only)
+  --quiet                Suppress output on success (validate only)
+  --dry-run              Preview changes without writing (bullet, release)
   --version              Print flatlog version
   --help                 Show this help message
 `.trim())
@@ -96,10 +125,9 @@ const liveInitialReleaseHeader = config.versionPattern
   .replace('YYYY-MM-DD', today)
 
 const assembledInitialRelease = `${config.bulletSign}${config.initialReleaseText}`
-const defaultBulletText = `${config.bulletSign}${config.allowedPrefixes[0]} `
 
 // Compile high-fidelity regular expressions for tracking/validation loops
-const escapedTemplateBase = escapeRegex(config.versionPattern).replace('YYYY\\-MM\\-DD', '\\d{4}-\\d{2}-\\d{2}')
+const escapedTemplateBase = escapeRegex(config.versionPattern).replace('YYYY\\-MM\\-DD', '(\\d{4}-\\d{2}-\\d{2})')
 const compiledVersionRegex = new RegExp(`^${escapedTemplateBase.replace('\\{\\{version\\}\\}', '(\\d+\\.\\d+\\.\\d+)')}$`)
 const compiledPlaceholderRegex = new RegExp(`^${escapeRegex(config.versionPattern).replace('\\{\\{version\\}\\}', escapeRegex(universalToken))}$`)
 
@@ -155,7 +183,7 @@ ${assembledInitialRelease}
 }
 
 // --- RESOLVE TARGET FILE FOR REMAINING ENGINE ACTIONS ---
-const isExplicitCmd = ['validate', 'add', 'get-version', 'get-release-notes'].includes(command)
+const isExplicitCmd = ['validate', 'bullet', 'release', 'get-version', 'get-release-notes'].includes(command)
 if (isExplicitCmd) {
   positionalArgs.shift()
 }
@@ -163,10 +191,22 @@ if (isExplicitCmd) {
 const targetFile = argv.file || 'CHANGELOG.md'
 const filePath = path.resolve(process.cwd(), targetFile)
 
-// --- COMMAND: ADD (SMART INJECTION RUNNER) ---
-if (command === 'add') {
+// --- COMMAND: BULLET ---
+if (command === 'bullet') {
   if (!fs.existsSync(filePath)) {
-    console.error(`${RED}flatlog Error: Cannot append. "${targetFile}" does not exist. Run "flatlog init" first.${RESET}`)
+    console.error(`${RED}flatlog Error: "${targetFile}" does not exist. Run "flatlog init" first.${RESET}`)
+    process.exit(1)
+  }
+
+  const bulletText = positionalArgs[0]
+  if (!bulletText) {
+    console.error(`${RED}flatlog Error: Bullet text required. Usage: flatlog bullet "Fixed: typo"${RESET}`)
+    process.exit(1)
+  }
+
+  const bulletLine = `${config.bulletSign}${bulletText}`
+  if (!validationRegex.test(bulletLine)) {
+    console.error(`${RED}flatlog Error: Invalid prefix. Allowed: ${config.allowedPrefixes.join(', ')}${RESET}`)
     process.exit(1)
   }
 
@@ -176,17 +216,63 @@ if (command === 'add') {
   const placeholderIdx = fileLines.findIndex(line => compiledPlaceholderRegex.test(line.trim()))
 
   if (placeholderIdx !== -1) {
-    fileLines.splice(placeholderIdx + 1, 0, defaultBulletText)
-    console.log(`${GREEN}✔ flatlog:${RESET} Appended empty item bullet under the active placeholder line.`)
+    fileLines.splice(placeholderIdx + 1, 0, bulletLine)
+    if (!isDryRun) console.log(`${GREEN}✔ flatlog:${RESET} Appended bullet under the active placeholder line.`)
   } else {
     const titleIdx = fileLines.findIndex(line => titleRegex.test(line.trim()))
-    const injectionBlock = ['', livePlaceholderText, defaultBulletText]
+    const injectionBlock = ['', livePlaceholderText, bulletLine]
     const targetInsertIdx = titleIdx !== -1 ? titleIdx + 1 : 0
     fileLines.splice(targetInsertIdx, 0, ...injectionBlock)
-    console.log(`${GREEN}✔ flatlog:${RESET} Generated and inserted active development pattern block into file.`)
+    if (!isDryRun) console.log(`${GREEN}✔ flatlog:${RESET} Generated and inserted active development pattern block into file.`)
   }
 
-  fs.writeFileSync(filePath, fileLines.join('\n'), 'utf8')
+  if (isDryRun) {
+    process.stdout.write(fileLines.join('\n'))
+  } else {
+    fs.writeFileSync(filePath, fileLines.join('\n'), 'utf8')
+  }
+  process.exit(0)
+}
+
+// --- COMMAND: RELEASE ---
+if (command === 'release') {
+  const releaseVersion = positionalArgs[0]
+  if (!releaseVersion) {
+    console.error(`${RED}flatlog Error: Version argument required. Usage: flatlog release <version>${RESET}`)
+    process.exit(1)
+  }
+
+  if (!fs.existsSync(filePath)) {
+    console.error(`${RED}flatlog Error: "${targetFile}" not found. Run "flatlog init" first.${RESET}`)
+    process.exit(1)
+  }
+
+  const releaseContent = fs.readFileSync(filePath, 'utf8')
+  const releaseLines = releaseContent.split(/\r?\n/)
+
+  const placeholderIdx = releaseLines.findIndex(line => compiledPlaceholderRegex.test(line.trim()))
+  if (placeholderIdx === -1) {
+    console.error(`${RED}flatlog Error: No placeholder found. Add a placeholder block first.${RESET}`)
+    process.exit(1)
+  }
+
+  const alreadyExists = releaseLines.some(line => {
+    const m = line.trim().match(compiledVersionRegex)
+    return m && m[1] === releaseVersion
+  })
+  if (alreadyExists) {
+    console.error(`${RED}flatlog Error: Version ${releaseVersion} already exists in "${targetFile}".${RESET}`)
+    process.exit(1)
+  }
+
+  const newHeader = config.versionPattern.replace('{{version}}', releaseVersion).replace('YYYY-MM-DD', today)
+  releaseLines[placeholderIdx] = newHeader
+  if (isDryRun) {
+    process.stdout.write(releaseLines.join('\n'))
+  } else {
+    fs.writeFileSync(filePath, releaseLines.join('\n'), 'utf8')
+    console.log(newHeader)
+  }
   process.exit(0)
 }
 
@@ -217,6 +303,7 @@ const lines = content.split(/\r?\n/)
 const report = { success: true, errors: [], warnings: [], metadata: { releasesChecked: 0, topmostVersion: null }, internal: { hasPlaceholder: false } }
 let titleFound = false
 let currentVersion = null
+let currentVersionDate = null
 const versionsFound = []
 
 lines.forEach((rawLine, index) => {
@@ -249,7 +336,12 @@ lines.forEach((rawLine, index) => {
   if (compiledVersionRegex.test(line)) {
     const versionMatch = line.match(compiledVersionRegex)
     const extractedVersion = versionMatch[1]
+    const extractedDate = versionMatch[2]
     if (!report.metadata.topmostVersion) report.metadata.topmostVersion = extractedVersion
+
+    if (isNaN(new Date(extractedDate))) {
+      report.errors.push({ line: lineNum, message: `Invalid date "${extractedDate}" is not a real calendar date.` })
+    }
 
     if (currentVersion && currentVersion !== 'placeholder') {
       const [nMajor, nMinor, nPatch] = extractedVersion.split('.').map(Number)
@@ -258,6 +350,10 @@ lines.forEach((rawLine, index) => {
       if (!isOlder) {
         report.errors.push({ line: lineNum, message: `Chronological ordering crash. Version ${extractedVersion} cannot follow version ${currentVersion}.` })
       }
+
+      if (currentVersionDate && !isNaN(new Date(extractedDate)) && new Date(extractedDate) > new Date(currentVersionDate)) {
+        report.warnings.push({ line: lineNum, message: `Date "${extractedDate}" is newer than previous version date "${currentVersionDate}". Date order contradicts version order.` })
+      }
     }
 
     if (versionsFound.includes(extractedVersion)) {
@@ -265,6 +361,7 @@ lines.forEach((rawLine, index) => {
     }
 
     currentVersion = extractedVersion
+    currentVersionDate = extractedDate
     versionsFound.push(extractedVersion)
     return
   }
@@ -355,7 +452,7 @@ if (isJsonMode) {
   process.exit(report.success ? 0 : 1)
 }
 
-console.log('\n--- flatlog Verification Report ---')
+if (!isQuiet) console.log('\n--- flatlog Verification Report ---')
 report.errors.forEach(e => console.error(`${RED}Line ${e.line}:${RESET} ${e.message}`))
 report.warnings.forEach(w => console.warn(`${YELLOW}Line ${w.line} Warning:${RESET} ${w.message}`))
 
@@ -363,11 +460,13 @@ if (!report.success) {
   console.error(`\n❌ ${RED}Validation Failed:${RESET} Correct formatting issues tracked above.\n`)
   process.exit(1)
 } else if (report.metadata.releasesChecked === 0 && currentVersion !== 'placeholder') {
-  console.warn(`⚠️  ${YELLOW}Verification Incomplete:${RESET} Structure valid, but no stable release chunks parsed.\n`)
+  if (!isQuiet) console.warn(`⚠️  ${YELLOW}Verification Incomplete:${RESET} Structure valid, but no stable release chunks parsed.\n`)
   process.exit(0)
 } else {
-  let contextMeta = `(${report.metadata.releasesChecked} stable releases confirmed)`
-  if (isStrict && expectedVersion) contextMeta += ` [Strict matched with version ${expectedVersion}]`
-  console.log(`✔ ${GREEN}Success:${RESET} "${targetFile}" matches flat specifications perfectly! ${contextMeta}\n`)
+  if (!isQuiet) {
+    let contextMeta = `(${report.metadata.releasesChecked} stable releases confirmed)`
+    if (isStrict && expectedVersion) contextMeta += ` [Strict matched with version ${expectedVersion}]`
+    console.log(`✔ ${GREEN}Success:${RESET} "${targetFile}" matches flat specifications perfectly! ${contextMeta}\n`)
+  }
   process.exit(0)
 }
