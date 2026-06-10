@@ -1,0 +1,42 @@
+{
+  "name": "@nilambar/flatlog",
+  "version": "1.0.0",
+  "description": "The Customizable, Flat Changelog Utility Belt",
+  "keywords": [
+    "changelog",
+    "cli",
+    "flat",
+    "utility"
+  ],
+  "homepage": "https://github.com/ernilambar/flatlog#readme",
+  "bugs": {
+    "url": "https://github.com/ernilambar/flatlog/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ernilambar/flatlog.git"
+  },
+  "license": "MIT",
+  "author": "Nilambar Sharma",
+  "files": [
+    "bin",
+    "README.md",
+    "LICENSE"
+  ],
+  "bin": {
+    "flatlog": "./bin/flatlog.js"
+  },
+  "scripts": {
+    "lint": "standard",
+    "lint:fix": "standard --fix"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "devDependencies": {
+    "standard": "*"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}
