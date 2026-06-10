@@ -12,6 +12,7 @@
 
 const fs = require('fs')
 const path = require('path')
+const minimist = require('minimist')
 
 // 1. Core Default Configuration Matrix
 const defaultConfig = {
@@ -35,12 +36,44 @@ if (fs.existsSync(configPath)) {
 }
 
 // 3. Process CLI Parameters
-const args = process.argv.slice(2)
-const command = args[0]
+const argv = minimist(process.argv.slice(2), {
+  boolean: ['json', 'strict', 'help', 'version'],
+  string: ['file'],
+  alias: { f: 'file' }
+})
+const command = argv._[0]
 
-const isJsonMode = args.includes('--json')
-const isStrict = args.includes('--strict')
-const positionalArgs = args.filter(arg => !arg.startsWith('--'))
+const isJsonMode = argv.json
+const isStrict = argv.strict
+const positionalArgs = argv._
+
+if (argv.version) {
+  const pkg = require('../package.json')
+  console.log(pkg.version)
+  process.exit(0)
+}
+
+if (argv.help || command === 'help') {
+  console.log(`
+Usage: flatlog <command> [options]
+
+Commands:
+  init                   Create a new changelog
+  add                    Insert a placeholder block or bullet item
+  validate               Validate changelog structure
+  get-version            Print the topmost stable version
+  get-release-notes      Print bullet notes for the latest release
+  get-release-notes <v>  Print bullet notes for a specific version
+
+Options:
+  --file, -f <file>      Target changelog file (default: CHANGELOG.md)
+  --strict               Enforce version match against package.json
+  --json                 Output results as JSON (validate only)
+  --version              Print flatlog version
+  --help                 Show this help message
+`.trim())
+  process.exit(0)
+}
 
 // Standard ANSI Terminal Color Codes
 const RED = '\x1b[31m'
@@ -77,7 +110,7 @@ const validationRegex = new RegExp(`^${bulletEscaped}(${prefixEscaped})\\s\\S.*$
 
 // --- COMMAND: INIT ---
 if (command === 'init') {
-  const targetFile = positionalArgs[1] || 'CHANGELOG.md'
+  const targetFile = argv.file || 'CHANGELOG.md'
   const destinationPath = path.resolve(process.cwd(), targetFile)
 
   if (fs.existsSync(destinationPath)) {
@@ -127,7 +160,7 @@ if (isExplicitCmd) {
   positionalArgs.shift()
 }
 
-const targetFile = positionalArgs[0] || 'CHANGELOG.md'
+const targetFile = argv.file || 'CHANGELOG.md'
 const filePath = path.resolve(process.cwd(), targetFile)
 
 // --- COMMAND: ADD (SMART INJECTION RUNNER) ---
@@ -167,7 +200,7 @@ if (!fs.existsSync(filePath)) {
   process.exit(1)
 }
 
-let expectedVersion = positionalArgs[1] || null
+let expectedVersion = positionalArgs[0] || null
 if (isStrict && !expectedVersion) {
   const packageJsonPath = path.resolve(process.cwd(), 'package.json')
   if (fs.existsSync(packageJsonPath)) {
@@ -286,8 +319,12 @@ if (command === 'get-version') {
 
 // --- COMMAND: GET-RELEASE-NOTES ---
 if (command === 'get-release-notes') {
-  if (!report.metadata.topmostVersion) process.exit(1)
+  const requestedVersion = positionalArgs[0] || null
+  const targetVersion = requestedVersion || report.metadata.topmostVersion
+  if (!targetVersion) process.exit(1)
+
   let capture = false
+  let found = false
   const notes = []
   const genericHeaderStarterToken = config.versionPattern.split(' ')[0]
 
@@ -295,13 +332,19 @@ if (command === 'get-release-notes') {
     const line = rawLine.trim()
     if (line.startsWith(genericHeaderStarterToken)) {
       if (capture) break
-      if (line.includes(report.metadata.topmostVersion)) capture = true
+      const m = line.match(compiledVersionRegex)
+      if (m && m[1] === targetVersion) {
+        capture = true
+        found = true
+      }
       continue
     }
     if (capture && line.startsWith(config.bulletSign)) {
       notes.push(rawLine)
     }
   }
+
+  if (!found) process.exit(1)
   console.log(notes.join('\n'))
   process.exit(0)
 }
