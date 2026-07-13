@@ -1,6 +1,6 @@
 {
   "name": "@nilambar/flatlog",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "The Customizable, Flat Changelog Utility Belt",
   "keywords": [
     "changelog",
@@ -18,30 +18,30 @@
   },
   "license": "MIT",
   "author": "Nilambar Sharma",
+  "bin": {
+    "flatlog": "./bin/flatlog.js"
+  },
   "files": [
     "bin",
     "CHANGELOG.md",
     "README.md",
     "LICENSE"
   ],
-  "bin": {
-    "flatlog": "./bin/flatlog.js"
-  },
   "scripts": {
     "lint": "standard",
     "lint:fix": "standard --fix",
     "test": "node --test"
   },
-  "engines": {
-    "node": ">=20"
+  "dependencies": {
+    "minimist": "^1.2.8"
   },
   "devDependencies": {
     "standard": "^17.1.2"
   },
+  "engines": {
+    "node": ">=20"
+  },
   "publishConfig": {
     "access": "public"
-  },
-  "dependencies": {
-    "minimist": "^1.2.8"
   }
 }

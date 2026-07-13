@@ -56,6 +56,14 @@ if (fs.existsSync(configPath)) {
         console.warn(`${YELLOW}Warning: Config "${key}" expects ${expected}, got ${actual}. Using default.${RESET}`)
         continue
       }
+      if (key === 'allowedPrefixes' && value.length === 0) {
+        console.warn(`${YELLOW}Warning: Config "allowedPrefixes" cannot be empty. Using default.${RESET}`)
+        continue
+      }
+      if (key === 'versionPattern' && (!value.includes('{{version}}') || !value.includes('YYYY-MM-DD'))) {
+        console.warn(`${YELLOW}Warning: Config "versionPattern" must contain "{{version}}" and "YYYY-MM-DD". Using default.${RESET}`)
+        continue
+      }
       validated[key] = value
     }
     config = { ...defaultConfig, ...validated }
@@ -103,7 +111,7 @@ Options:
   --strict               Enforce version match against package.json
   --json                 Output results as JSON (validate only)
   --quiet                Suppress output on success (validate only)
-  --dry-run              Preview changes without writing (bullet, release)
+  --dry-run              Preview changes without writing (bullet, release, next)
   --version              Print flatlog version
   --help                 Show this help message
 `.trim())
@@ -114,22 +122,39 @@ Options:
 const today = new Date().toISOString().split('T')[0]
 const escapeRegex = (str) => str.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&')
 
+const versionPart = 'v?\\d+(?:\\.\\d+)+(?:-[\\w.]+)?'
+const versionInputRegex = new RegExp(`^${versionPart}$`)
+
+const compareVersions = (a, b) => {
+  const parse = (v) => {
+    const [core, pre] = v.replace(/^v/, '').split(/-(.+)/)
+    return { nums: core.split('.').map(Number), pre: pre || null }
+  }
+  const pa = parse(a)
+  const pb = parse(b)
+  const len = Math.max(pa.nums.length, pb.nums.length)
+  for (let i = 0; i < len; i++) {
+    const x = pa.nums[i] ?? 0
+    const y = pb.nums[i] ?? 0
+    if (x !== y) return x - y
+  }
+  if (!pa.pre && pb.pre) return 1
+  if (pa.pre && !pb.pre) return -1
+  if (pa.pre === pb.pre) return 0
+  return pa.pre < pb.pre ? -1 : 1
+}
+
 const universalToken = 'X.X.X'
 
 // Generate the literal placeholder line (keeps YYYY-MM-DD untouched as structural text)
 const livePlaceholderText = config.versionPattern.replace('{{version}}', universalToken)
 
-// Generate the active release header line for initialization commands
-const liveInitialReleaseHeader = config.versionPattern
-  .replace('{{version}}', '1.0.0')
-  .replace('YYYY-MM-DD', today)
-
 const assembledInitialRelease = `${config.bulletSign}${config.initialReleaseText}`
 
 // Compile high-fidelity regular expressions for tracking/validation loops
-const escapedTemplateBase = escapeRegex(config.versionPattern).replace('YYYY\\-MM\\-DD', '(\\d{4}-\\d{2}-\\d{2})')
-const compiledVersionRegex = new RegExp(`^${escapedTemplateBase.replace('\\{\\{version\\}\\}', '(\\d+\\.\\d+\\.\\d+)')}$`)
-const compiledPlaceholderRegex = new RegExp(`^${escapeRegex(config.versionPattern).replace('\\{\\{version\\}\\}', escapeRegex(universalToken))}$`)
+const escapedPattern = escapeRegex(config.versionPattern)
+const compiledVersionRegex = new RegExp(`^${escapedPattern.replace('YYYY\\-MM\\-DD', '(\\d{4}-\\d{2}-\\d{2})').replace('\\{\\{version\\}\\}', `(${versionPart})`)}$`)
+const compiledPlaceholderRegex = new RegExp(`^${escapedPattern.replace('\\{\\{version\\}\\}', escapeRegex(universalToken))}$`)
 
 const titleRegex = new RegExp(config.titlePattern)
 const prefixEscaped = config.allowedPrefixes.map(escapeRegex).join('|')
@@ -152,8 +177,9 @@ if (command === 'init') {
     process.exit(1)
   }
 
-  // Attempt to sniff package name for dynamic branded title headers
+  // Attempt to sniff package name/version for dynamic branded title headers
   let customTitle = 'Changelog'
+  let initialVersion = '1.0.0'
   const packageJsonPath = path.resolve(process.cwd(), 'package.json')
   if (fs.existsSync(packageJsonPath)) {
     try {
@@ -166,8 +192,15 @@ if (command === 'init') {
           .join(' ')
         customTitle = `${formattedName} Changelog`
       }
+      if (pkg.version && versionInputRegex.test(pkg.version)) {
+        initialVersion = pkg.version
+      }
     } catch (e) {}
   }
+
+  const liveInitialReleaseHeader = config.versionPattern
+    .replace('{{version}}', initialVersion)
+    .replace('YYYY-MM-DD', today)
 
   const boilerplate = `# ${customTitle}
 
@@ -246,8 +279,8 @@ if (command === 'release') {
     process.exit(1)
   }
 
-  if (!/^\d+\.\d+\.\d+$/.test(releaseVersion)) {
-    console.error(`${RED}Error: Invalid version "${releaseVersion}". Expected format: X.Y.Z${RESET}`)
+  if (!versionInputRegex.test(releaseVersion)) {
+    console.error(`${RED}Error: Invalid version "${releaseVersion}". Expected format: X.Y.Z (optionally prefixed with "v" or suffixed with prerelease, e.g. v1.2.3-beta.1)${RESET}`)
     process.exit(1)
   }
 
@@ -303,7 +336,7 @@ if (command === 'next') {
 
   const titleIdx = nextLines.findIndex(line => titleRegex.test(line.trim()))
   const insertAt = titleIdx !== -1 ? titleIdx + 1 : 0
-  nextLines.splice(insertAt, 0, '', livePlaceholderText, `${config.bulletSign}${config.allowedPrefixes[0]} `)
+  nextLines.splice(insertAt, 0, '', livePlaceholderText)
 
   if (isDryRun) {
     process.stdout.write(nextLines.join('\n'))
@@ -338,10 +371,11 @@ if (isStrict && !expectedVersion) {
 const content = fs.readFileSync(filePath, 'utf8')
 const lines = content.split(/\r?\n/)
 
-const report = { success: true, errors: [], warnings: [], metadata: { releasesChecked: 0, topmostVersion: null }, internal: { hasPlaceholder: false } }
+const report = { success: true, errors: [], warnings: [], metadata: { releasesChecked: 0, topmostVersion: null } }
 let titleFound = false
 let currentVersion = null
 let currentVersionDate = null
+let hasPlaceholder = false
 const versionsFound = []
 
 lines.forEach((rawLine, index) => {
@@ -367,7 +401,7 @@ lines.forEach((rawLine, index) => {
       report.errors.push({ line: lineNum, message: 'Unreleased block must be at the top of the changelog.' })
     }
     currentVersion = 'placeholder'
-    report.internal.hasPlaceholder = true
+    hasPlaceholder = true
     return
   }
 
@@ -381,10 +415,10 @@ lines.forEach((rawLine, index) => {
       report.errors.push({ line: lineNum, message: `Invalid date: ${extractedDate}` })
     }
 
-    if (currentVersion && currentVersion !== 'placeholder') {
-      const [nMajor, nMinor, nPatch] = extractedVersion.split('.').map(Number)
-      const [oMajor, oMinor, oPatch] = currentVersion.split('.').map(Number)
-      const isOlder = nMajor !== oMajor ? nMajor < oMajor : (nMinor !== oMinor ? nMinor < oMinor : nPatch < oPatch)
+    if (versionsFound.includes(extractedVersion)) {
+      report.errors.push({ line: lineNum, message: `Version ${extractedVersion} is listed more than once.` })
+    } else if (currentVersion && currentVersion !== 'placeholder') {
+      const isOlder = compareVersions(extractedVersion, currentVersion) < 0
       if (!isOlder) {
         report.errors.push({ line: lineNum, message: `Version ${extractedVersion} is out of order (should come before ${currentVersion}).` })
       }
@@ -392,10 +426,6 @@ lines.forEach((rawLine, index) => {
       if (currentVersionDate && !isNaN(new Date(extractedDate)) && new Date(extractedDate) > new Date(currentVersionDate)) {
         report.warnings.push({ line: lineNum, message: `Date ${extractedDate} is newer than ${currentVersionDate} but the version is older.` })
       }
-    }
-
-    if (versionsFound.includes(extractedVersion)) {
-      report.errors.push({ line: lineNum, message: `Version ${extractedVersion} is listed more than once.` })
     }
 
     currentVersion = extractedVersion
@@ -435,14 +465,13 @@ lines.forEach((rawLine, index) => {
 report.metadata.releasesChecked = versionsFound.length
 
 if (isStrict && expectedVersion) {
-  if (report.internal.hasPlaceholder) {
+  if (hasPlaceholder) {
     report.errors.push({ line: 0, message: 'Unreleased block found. Run "flatlog release <version>" before publishing.' })
   } else if (report.metadata.topmostVersion && expectedVersion !== report.metadata.topmostVersion) {
     report.errors.push({ line: 0, message: `Version mismatch: package.json has ${expectedVersion} but changelog has ${report.metadata.topmostVersion}.` })
   }
 }
 
-delete report.internal
 if (report.errors.length > 0) report.success = false
 
 // --- COMMAND: GET-VERSION ---
@@ -461,14 +490,15 @@ if (command === 'get-release-notes') {
   let capture = false
   let found = false
   const notes = []
-  const genericHeaderStarterToken = config.versionPattern.split(' ')[0]
 
   for (const rawLine of lines) {
     const line = rawLine.trim()
-    if (line.startsWith(genericHeaderStarterToken)) {
+    const versionMatch = line.match(compiledVersionRegex)
+    const isPlaceholder = compiledPlaceholderRegex.test(line)
+
+    if (versionMatch || isPlaceholder) {
       if (capture) break
-      const m = line.match(compiledVersionRegex)
-      if (m && m[1] === targetVersion) {
+      if (versionMatch && versionMatch[1] === targetVersion) {
         capture = true
         found = true
       }
