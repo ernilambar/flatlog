@@ -35,7 +35,7 @@ By default all commands target `CHANGELOG.md`. Use `--file` / `-f` to target a d
 
 ## Version format
 
-Only `X.Y.Z` semver versions are supported.
+Versions follow `X.Y.Z` semver, with optional `v` prefix and prerelease suffix (e.g. `v1.2.3-beta.1`).
 
 ## Configuration
 
