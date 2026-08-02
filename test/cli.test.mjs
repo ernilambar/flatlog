@@ -121,20 +121,6 @@ describe('flatlog init', () => {
     assert(fs.existsSync(path.join(testDir, 'CHANGES.md')))
     assert(!fs.existsSync(path.join(testDir, 'CHANGELOG.md')))
   })
-
-  it('uses package name in title when package.json present', async () => {
-    fs.writeFileSync(path.join(testDir, 'package.json'), JSON.stringify({ name: 'my-project' }))
-    await runCli(['init'], { cwd: testDir })
-    const content = fs.readFileSync(path.join(testDir, 'CHANGELOG.md'), 'utf8')
-    assert.match(content, /# My Project Changelog/)
-  })
-
-  it('falls back to generic title when package.json has no name', async () => {
-    fs.writeFileSync(path.join(testDir, 'package.json'), JSON.stringify({ version: '1.0.0' }))
-    await runCli(['init'], { cwd: testDir })
-    const content = fs.readFileSync(path.join(testDir, 'CHANGELOG.md'), 'utf8')
-    assert.match(content, /# Changelog/)
-  })
 })
 
 describe('flatlog validate', () => {
@@ -455,43 +441,39 @@ describe('flatlog get-version', () => {
   })
 })
 
-describe('flatlog validate --strict', () => {
+describe('flatlog validate <version>', () => {
   let testDir
 
-  beforeEach(() => { testDir = tmpTestDir('strict') })
+  beforeEach(() => { testDir = tmpTestDir('validate-version') })
   afterEach(() => { fs.rmSync(testDir, { recursive: true }) })
 
-  it('exits 0 when topmost version matches package.json version', async () => {
+  it('exits 0 when topmost version matches given version', async () => {
     fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), VALID_CHANGELOG)
-    fs.writeFileSync(path.join(testDir, 'package.json'), JSON.stringify({ version: '1.0.0' }))
-    const result = await runCli(['validate', '--strict'], { cwd: testDir })
+    const result = await runCli(['validate', '1.0.0'], { cwd: testDir })
     assert.strictEqual(result.code, 0)
   })
 
-  it('exits 1 when topmost version does not match package.json version', async () => {
+  it('exits 1 when topmost version does not match given version', async () => {
     fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), VALID_CHANGELOG)
-    fs.writeFileSync(path.join(testDir, 'package.json'), JSON.stringify({ version: '2.0.0' }))
-    const result = await runCli(['validate', '--strict'], { cwd: testDir })
+    const result = await runCli(['validate', '2.0.0'], { cwd: testDir })
     assert.strictEqual(result.code, 1)
     assert.match(result.stderr, /[Mm]ismatch/)
   })
 
-  it('exits 1 when placeholder is present in strict mode', async () => {
+  it('exits 1 when placeholder is present and a version is given', async () => {
     fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), CHANGELOG_WITH_PLACEHOLDER)
-    fs.writeFileSync(path.join(testDir, 'package.json'), JSON.stringify({ version: '1.0.0' }))
-    const result = await runCli(['validate', '--strict'], { cwd: testDir })
+    const result = await runCli(['validate', '1.0.0'], { cwd: testDir })
     assert.strictEqual(result.code, 1)
     assert.match(result.stderr, /[Uu]nreleased/)
   })
 
-  it('--json strict mode reports version mismatch in errors', async () => {
+  it('--json reports version mismatch in errors', async () => {
     fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), VALID_CHANGELOG)
-    fs.writeFileSync(path.join(testDir, 'package.json'), JSON.stringify({ version: '9.9.9' }))
-    const result = await runCli(['validate', '--strict', '--json'], { cwd: testDir })
+    const result = await runCli(['validate', '9.9.9', '--json'], { cwd: testDir })
     assert.strictEqual(result.code, 1)
     const parsed = JSON.parse(result.stdout)
     assert.strictEqual(parsed.success, false)
-    assert(parsed.errors.some(e => /[Ss]trict|mismatch/.test(e.message)))
+    assert(parsed.errors.some(e => /mismatch/.test(e.message)))
   })
 })
 

@@ -1,6 +1,6 @@
 {
   "name": "@nilambar/flatlog",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "The Customizable, Flat Changelog Utility Belt",
   "keywords": [
     "changelog",
@@ -24,6 +24,7 @@
   "files": [
     "bin",
     "CHANGELOG.md",
+    "CHANGELOG_GUIDE.md",
     "README.md",
     "LICENSE"
   ],
