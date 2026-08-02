@@ -161,6 +161,9 @@ const assembledInitialRelease = `${config.bulletSign}${config.initialReleaseText
 // Compile high-fidelity regular expressions for tracking/validation loops
 const escapedPattern = escapeRegex(config.versionPattern)
 const compiledVersionRegex = new RegExp(`^${escapedPattern.replace('YYYY\\-MM\\-DD', '(\\d{4}-\\d{2}-\\d{2})').replace('\\{\\{version\\}\\}', `(${versionPart})`)}$`)
+const versionIsFirst = config.versionPattern.indexOf('{{version}}') < config.versionPattern.indexOf('YYYY-MM-DD')
+const versionGroup = versionIsFirst ? 1 : 2
+const dateGroup = versionIsFirst ? 2 : 1
 const compiledPlaceholderRegex = new RegExp(`^${escapedPattern.replace('\\{\\{version\\}\\}', escapeRegex(universalToken))}$`)
 
 const titleRegex = new RegExp(config.titlePattern)
@@ -294,7 +297,7 @@ if (command === 'release') {
 
   const alreadyExists = releaseLines.some(line => {
     const m = line.trim().match(compiledVersionRegex)
-    return m && m[1] === releaseVersion
+    return m && m[versionGroup] === releaseVersion
   })
   if (alreadyExists) {
     console.error(`${RED}Error: Version ${releaseVersion} already exists in "${targetFile}".${RESET}`)
@@ -392,8 +395,8 @@ lines.forEach((rawLine, index) => {
 
   if (compiledVersionRegex.test(line)) {
     const versionMatch = line.match(compiledVersionRegex)
-    const extractedVersion = versionMatch[1]
-    const extractedDate = versionMatch[2]
+    const extractedVersion = versionMatch[versionGroup]
+    const extractedDate = versionMatch[dateGroup]
     if (!report.metadata.topmostVersion) report.metadata.topmostVersion = extractedVersion
 
     if (isNaN(new Date(extractedDate))) {
@@ -483,7 +486,7 @@ if (command === 'get-release-notes') {
 
     if (versionMatch || isPlaceholder) {
       if (capture) break
-      if (versionMatch && versionMatch[1] === targetVersion) {
+      if (versionMatch && versionMatch[versionGroup] === targetVersion) {
         capture = true
         found = true
       }

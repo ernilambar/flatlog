@@ -561,3 +561,64 @@ describe('flatlog get-release-notes', () => {
     assert.strictEqual(result.code, 1)
   })
 })
+
+describe('flatlog date-first versionPattern', () => {
+  let testDir
+
+  const DATE_FIRST_CHANGELOG = `# Test Changelog
+
+2026-07-23 - version 2.0.4
+- Fixed: Something.
+`
+
+  const DATE_FIRST_WITH_PLACEHOLDER = `# Test Changelog
+
+YYYY-MM-DD - version X.X.X
+- Added: Setup.
+
+2026-07-23 - version 2.0.4
+- Fixed: Something.
+`
+
+  beforeEach(() => {
+    testDir = tmpTestDir('date-first')
+    fs.writeFileSync(path.join(testDir, '.flatlogrc.json'), JSON.stringify({ versionPattern: 'YYYY-MM-DD - version {{version}}' }))
+  })
+  afterEach(() => { fs.rmSync(testDir, { recursive: true }) })
+
+  it('validate exits 0 when date placeholder comes before version placeholder', async () => {
+    fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), DATE_FIRST_CHANGELOG)
+    const result = await runCli(['validate'], { cwd: testDir })
+    assert.strictEqual(result.code, 0)
+  })
+
+  it('validate reports invalid date, not invalid version, for a bad calendar date', async () => {
+    const badDate = '# Test Changelog\n\n2024-13-45 - version 2.0.4\n- Fixed: Something.\n'
+    fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), badDate)
+    const result = await runCli(['validate', '--json'], { cwd: testDir })
+    const parsed = JSON.parse(result.stdout)
+    assert.strictEqual(parsed.success, false)
+    assert(parsed.errors.some(e => /Invalid date: 2024-13-45/.test(e.message)))
+  })
+
+  it('get-version prints the version, not the date', async () => {
+    fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), DATE_FIRST_CHANGELOG)
+    const result = await runCli(['get-version'], { cwd: testDir })
+    assert.strictEqual(result.code, 0)
+    assert.strictEqual(result.stdout.trim(), '2.0.4')
+  })
+
+  it('get-release-notes returns the correct release body', async () => {
+    fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), DATE_FIRST_CHANGELOG)
+    const result = await runCli(['get-release-notes'], { cwd: testDir })
+    assert.strictEqual(result.code, 0)
+    assert.match(result.stdout, /Fixed: Something/)
+  })
+
+  it('release exits 1 when the version already exists', async () => {
+    fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), DATE_FIRST_WITH_PLACEHOLDER)
+    const result = await runCli(['release', '2.0.4'], { cwd: testDir })
+    assert.strictEqual(result.code, 1)
+    assert.match(result.stderr, /already exists/)
+  })
+})
