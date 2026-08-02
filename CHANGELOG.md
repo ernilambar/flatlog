@@ -1,5 +1,8 @@
 # flatlog Changelog
 
+## 1.0.4 - 2026-08-02
+- Fixed: version/date swap when `versionPattern` places the date before `{{version}}`
+
 ## 1.0.3 - 2026-08-02
 - Added: `--help`/`-h` and `--version`/`-v` short aliases
 - Added: error when target changelog path exists but is not a file
