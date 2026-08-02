@@ -8,6 +8,19 @@ The Customizable, Flat Changelog Utility Belt.
 npm install -g @nilambar/flatlog
 ```
 
+Or with pnpm/yarn:
+
+```bash
+pnpm add -g @nilambar/flatlog
+yarn global add @nilambar/flatlog
+```
+
+No install, run once:
+
+```bash
+npx @nilambar/flatlog init
+```
+
 ## Usage
 
 ```bash
