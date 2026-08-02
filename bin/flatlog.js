@@ -5,7 +5,7 @@
  * Commands:
  * - init                         : Generates a baseline configuration and CHANGELOG.md.
  * - add                          : Intelligently inserts a placeholder block or an active bullet item.
- * - validate [--strict] [--json] : Audits structural integrity, layout conventions, and rules.
+ * - validate [<version>] [--json] : Audits structural integrity, layout conventions, and rules.
  * - get-version                  : Extracts the highest parsed stable release version string.
  * - get-release-notes            : Isolates markdown bullet content for the latest release.
  */
@@ -74,14 +74,21 @@ if (fs.existsSync(configPath)) {
 
 // 3. Process CLI Parameters
 const argv = minimist(process.argv.slice(2), {
-  boolean: ['json', 'strict', 'quiet', 'dry-run', 'help', 'version'],
+  boolean: ['json', 'quiet', 'dry-run', 'help', 'version'],
   string: ['file'],
-  alias: { f: 'file' }
+  alias: { f: 'file', h: 'help', v: 'version' }
 })
+
+const knownFlags = new Set(['_', 'json', 'quiet', 'dry-run', 'help', 'version', 'file', 'f', 'h', 'v'])
+const unknownFlag = Object.keys(argv).find(key => !knownFlags.has(key))
+if (unknownFlag) {
+  console.error(`${RED}Error: Unknown option "--${unknownFlag}". Run "flatlog --help" for usage.${RESET}`)
+  process.exit(1)
+}
+
 const command = argv._[0]
 
 const isJsonMode = argv.json
-const isStrict = argv.strict
 const isQuiet = argv.quiet
 const isDryRun = argv['dry-run']
 const positionalArgs = argv._
@@ -101,19 +108,19 @@ Commands:
   bullet "<Prefix: text>" Insert a bullet item (e.g. "Fixed: typo")
   release <version>      Promote placeholder to a versioned release header
   next                   Add a new unreleased block (use this after a release)
-  validate               Validate changelog structure
+  validate [<version>]   Validate changelog structure. If <version> is given,
+                          also enforce the topmost version matches it
   get-version            Print the topmost stable version
   get-release-notes      Print bullet notes for the latest release
   get-release-notes <v>  Print bullet notes for a specific version
 
 Options:
   --file, -f <file>      Target changelog file (default: CHANGELOG.md)
-  --strict               Enforce version match against package.json
   --json                 Output results as JSON (validate only)
   --quiet                Suppress output on success (validate only)
   --dry-run              Preview changes without writing (bullet, release, next)
-  --version              Print flatlog version
-  --help                 Show this help message
+  --version, -v          Print flatlog version
+  --help, -h             Show this help message
 `.trim())
   process.exit(0)
 }
@@ -177,26 +184,8 @@ if (command === 'init') {
     process.exit(1)
   }
 
-  // Attempt to sniff package name/version for dynamic branded title headers
-  let customTitle = 'Changelog'
-  let initialVersion = '1.0.0'
-  const packageJsonPath = path.resolve(process.cwd(), 'package.json')
-  if (fs.existsSync(packageJsonPath)) {
-    try {
-      const pkg = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'))
-      if (pkg.name) {
-        // Capitalize or clean up simple project slug strings smoothly
-        const formattedName = pkg.name
-          .split(/[-_]/)
-          .map(word => word.charAt(0).toUpperCase() + word.slice(1))
-          .join(' ')
-        customTitle = `${formattedName} Changelog`
-      }
-      if (pkg.version && versionInputRegex.test(pkg.version)) {
-        initialVersion = pkg.version
-      }
-    } catch (e) {}
-  }
+  const customTitle = 'Changelog'
+  const initialVersion = '1.0.0'
 
   const liveInitialReleaseHeader = config.versionPattern
     .replace('{{version}}', initialVersion)
@@ -228,6 +217,11 @@ if (isExplicitCmd) {
 
 const targetFile = argv.file || 'CHANGELOG.md'
 const filePath = path.resolve(process.cwd(), targetFile)
+
+if (fs.existsSync(filePath) && !fs.statSync(filePath).isFile()) {
+  console.error(`${RED}Error: "${targetFile}" is not a file.${RESET}`)
+  process.exit(1)
+}
 
 // --- COMMAND: BULLET ---
 if (command === 'bullet') {
@@ -357,16 +351,7 @@ if (!fs.existsSync(filePath)) {
   process.exit(1)
 }
 
-let expectedVersion = positionalArgs[0] || null
-if (isStrict && !expectedVersion) {
-  const packageJsonPath = path.resolve(process.cwd(), 'package.json')
-  if (fs.existsSync(packageJsonPath)) {
-    try {
-      const pkg = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'))
-      if (pkg.version) expectedVersion = pkg.version
-    } catch (e) {}
-  }
-}
+const expectedVersion = positionalArgs[0] || null
 
 const content = fs.readFileSync(filePath, 'utf8')
 const lines = content.split(/\r?\n/)
@@ -464,11 +449,11 @@ lines.forEach((rawLine, index) => {
 
 report.metadata.releasesChecked = versionsFound.length
 
-if (isStrict && expectedVersion) {
+if (expectedVersion) {
   if (hasPlaceholder) {
     report.errors.push({ line: 0, message: 'Unreleased block found. Run "flatlog release <version>" before publishing.' })
   } else if (report.metadata.topmostVersion && expectedVersion !== report.metadata.topmostVersion) {
-    report.errors.push({ line: 0, message: `Version mismatch: package.json has ${expectedVersion} but changelog has ${report.metadata.topmostVersion}.` })
+    report.errors.push({ line: 0, message: `Version mismatch: expected ${expectedVersion} but changelog has ${report.metadata.topmostVersion}.` })
   }
 }
 
@@ -531,7 +516,7 @@ if (!report.success) {
 } else {
   if (!isQuiet) {
     let contextMeta = `${report.metadata.releasesChecked} release${report.metadata.releasesChecked !== 1 ? 's' : ''}`
-    if (isStrict && expectedVersion) contextMeta += `, strict v${expectedVersion}`
+    if (expectedVersion) contextMeta += `, checked v${expectedVersion}`
     console.log(`${GREEN}✔${RESET} Valid (${contextMeta})`)
   }
   process.exit(0)

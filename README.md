@@ -16,11 +16,13 @@ flatlog bullet "Fixed: typo"         # Insert a bullet item under the active pla
 flatlog release <version>            # Promote placeholder to a versioned release header
 flatlog next                         # Add a new unreleased block (use this after a release)
 flatlog validate                     # Audit changelog structure
-flatlog validate --strict            # Also enforce version match with package.json
+flatlog validate <version>           # Also enforce topmost version matches <version>
 flatlog validate --json              # Output results as JSON
 flatlog get-version                  # Print the latest stable release version
 flatlog get-release-notes            # Print bullet items for the latest release
 flatlog get-release-notes <version>  # Print bullet items for a specific version
+flatlog --version, -v                # Print flatlog version
+flatlog --help, -h                   # Show usage help
 ```
 
 ### Typical workflow
@@ -52,6 +54,10 @@ Create a `.flatlogrc.json` in your project root to override any defaults:
 }
 ```
 
+## AI agents
+
+Point your AI agent at [CHANGELOG_GUIDE.md](CHANGELOG_GUIDE.md) (also shipped in `node_modules/@nilambar/flatlog/`) before it writes changelog entries — it documents the format `flatlog validate` enforces, with a worked example and an error-to-fix table.
+
 ## License
 
-MIT
+[MIT](LICENSE) © 2026 [Nilambar Sharma](https://www.nilambar.net)
