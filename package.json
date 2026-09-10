@@ -29,18 +29,19 @@
     "LICENSE"
   ],
   "scripts": {
-    "lint": "standard",
-    "lint:fix": "standard --fix",
+    "lint": "eslint .",
+    "format": "eslint . --fix",
     "test": "node --test"
   },
   "dependencies": {
     "minimist": "^1.2.8"
   },
   "devDependencies": {
-    "standard": "^17.1.2"
+    "eslint": "^9.39.5",
+    "neostandard": "^0.13.0"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "publishConfig": {
     "access": "public"

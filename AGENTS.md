@@ -10,13 +10,13 @@ flatlog is a customizable flat changelog CLI utility written in Node.js (CommonJ
 npm ci
 ```
 
-Requires Node.js >= 20.
+Requires Node.js >= 22.
 
 ## Commands
 
 ```bash
-npm run lint        # Lint with standard
-npm run lint:fix    # Auto-fix lint issues
+npm run lint        # Lint with eslint (neostandard config)
+npm run format      # Auto-fix lint issues
 npm test            # Run tests with node --test
 ```
 
@@ -39,4 +39,4 @@ npm run lint
 npm test
 ```
 
-All code must pass `standard` with zero errors before shipping.
+All code must pass `eslint` with zero errors before shipping.
