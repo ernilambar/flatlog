@@ -874,3 +874,107 @@ YYYY-MM-DD - version X.X.X
     assert.match(result.stderr, /already exists/)
   })
 })
+
+describe('flatlog semver handling', () => {
+  let testDir
+
+  beforeEach(() => { testDir = tmpTestDir('semver') })
+  afterEach(() => { fs.rmSync(testDir, { recursive: true }) })
+
+  it('exits 0 for correctly ordered prereleases', async () => {
+    const ordered = '# Test Changelog\n\n## 1.0.0 - 2024-01-01\n- Added: final.\n\n## 1.0.0-beta.10 - 2023-12-01\n- Added: b10.\n\n## 1.0.0-beta.2 - 2023-11-01\n- Added: b2.\n'
+    fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), ordered)
+    const result = await runCli(['validate'], { cwd: testDir })
+    assert.strictEqual(result.code, 0)
+  })
+
+  it('exits 1 for out-of-order prereleases', async () => {
+    const bad = '# Test Changelog\n\n## 1.0.0 - 2024-01-01\n- Added: final.\n\n## 1.0.0-beta.2 - 2023-12-01\n- Added: b2.\n\n## 1.0.0-beta.10 - 2023-11-01\n- Added: b10.\n'
+    fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), bad)
+    const result = await runCli(['validate', '--json'], { cwd: testDir })
+    const parsed = JSON.parse(result.stdout)
+    assert.strictEqual(parsed.success, false)
+    assert(parsed.errors.some(e => /out of order/.test(e.message)))
+  })
+
+  it('exits 1 for out-of-order numeric prerelease identifiers', async () => {
+    const bad = '# Test Changelog\n\n## 1.0.0-2 - 2024-01-01\n- Added: two.\n\n## 1.0.0-10 - 2023-12-01\n- Added: ten.\n'
+    fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), bad)
+    const result = await runCli(['validate', '--json'], { cwd: testDir })
+    const parsed = JSON.parse(result.stdout)
+    assert.strictEqual(parsed.success, false)
+    assert(parsed.errors.some(e => /out of order/.test(e.message)))
+  })
+
+  it('treats v-prefixed and plain versions as duplicates', async () => {
+    const duped = '# Test Changelog\n\n## v1.0.0 - 2024-06-01\n- Added: one.\n\n## 1.0.0 - 2024-01-01\n- Added: one again.\n'
+    fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), duped)
+    const result = await runCli(['validate', '--json'], { cwd: testDir })
+    const parsed = JSON.parse(result.stdout)
+    assert.strictEqual(parsed.success, false)
+    assert(parsed.errors.some(e => /more than once/.test(e.message)))
+    assert.strictEqual(parsed.metadata.releasesChecked, 1)
+  })
+
+  it('validate <version> matches ignoring the v prefix', async () => {
+    const vPrefixed = '# Test Changelog\n\n## v2.0.0 - 2024-06-01\n- Added: two.\n'
+    fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), vPrefixed)
+    const result = await runCli(['validate', '2.0.0'], { cwd: testDir })
+    assert.strictEqual(result.code, 0)
+  })
+
+  it('exits 1 for a version header with leading zeros (strict semver)', async () => {
+    const leadingZero = '# Test Changelog\n\n## 01.0.0 - 2024-01-01\n- Added: one.\n'
+    fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), leadingZero)
+    const result = await runCli(['validate', '--json'], { cwd: testDir })
+    const parsed = JSON.parse(result.stdout)
+    assert.strictEqual(parsed.success, false)
+    assert(parsed.errors.some(e => /Unexpected content/.test(e.message)))
+  })
+
+  it('exits 0 for a hyphenated prerelease identifier in a header', async () => {
+    const hyphenated = '# Test Changelog\n\n## 1.0.0-alpha-1 - 2024-01-01\n- Added: one.\n'
+    fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), hyphenated)
+    const result = await runCli(['validate'], { cwd: testDir })
+    assert.strictEqual(result.code, 0)
+  })
+
+  it('exits 0 for build metadata in a header', async () => {
+    const withBuild = '# Test Changelog\n\n## 1.0.0+build.1 - 2024-01-01\n- Added: one.\n'
+    fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), withBuild)
+    const result = await runCli(['validate'], { cwd: testDir })
+    assert.strictEqual(result.code, 0)
+  })
+
+  it('get-version preserves the raw v-prefixed version', async () => {
+    const vPrefixed = '# Test Changelog\n\n## v2.0.0 - 2024-06-01\n- Added: two.\n'
+    fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), vPrefixed)
+    const result = await runCli(['get-version'], { cwd: testDir })
+    assert.strictEqual(result.code, 0)
+    assert.strictEqual(result.stdout.trim(), 'v2.0.0')
+  })
+
+  it('release rejects leading-zero versions', async () => {
+    fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), CHANGELOG_WITH_PLACEHOLDER)
+    const result = await runCli(['release', '01.0.0'], { cwd: testDir })
+    assert.strictEqual(result.code, 1)
+    assert.match(result.stderr, /Invalid version "01\.0\.0"/)
+  })
+
+  it('release accepts a hyphenated prerelease identifier', async () => {
+    fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), CHANGELOG_WITH_PLACEHOLDER)
+    const result = await runCli(['release', '1.0.0-alpha-1'], { cwd: testDir })
+    assert.strictEqual(result.code, 0)
+    const content = fs.readFileSync(path.join(testDir, 'CHANGELOG.md'), 'utf8')
+    assert.match(content, /## 1\.0\.0-alpha-1 - \d{4}-\d{2}-\d{2}/)
+  })
+
+  it('get-release-notes finds a v-prefixed release by its plain version', async () => {
+    const vPrefixed = '# Test Changelog\n\n## v2.0.0 - 2024-06-01\n- Added: two.\n\n## 1.0.0 - 2024-01-01\n- Added: one.\n'
+    fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), vPrefixed)
+    const result = await runCli(['get-release-notes', '2.0.0'], { cwd: testDir })
+    assert.strictEqual(result.code, 0)
+    assert.match(result.stdout, /Added: two\./)
+    assert(!result.stdout.includes('Added: one.'))
+  })
+})

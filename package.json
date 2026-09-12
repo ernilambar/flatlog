@@ -1,6 +1,6 @@
 {
   "name": "@nilambar/flatlog",
-  "version": "1.0.4",
+  "version": "2.0.0",
   "description": "The Customizable, Flat Changelog Utility Belt",
   "keywords": [
     "changelog",
@@ -33,7 +33,8 @@
     "test": "node --test"
   },
   "dependencies": {
-    "minimist": "^1.2.8"
+    "minimist": "^1.2.8",
+    "semver": "^7.8.5"
   },
   "devDependencies": {
     "eslint": "^9.39.5",

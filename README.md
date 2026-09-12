@@ -102,7 +102,9 @@ Each entry in `errors` and `warnings` carries a `line` (1-based; `0` for file-le
 
 ## Version format
 
-Versions follow `X.Y.Z` semver, with optional `v` prefix and prerelease suffix (e.g. `v1.2.3-beta.1`).
+Versions follow strict [SemVer 2.0.0](https://semver.org/): `X.Y.Z`, with an optional `v` prefix, an optional prerelease suffix (e.g. `v1.2.3-beta.1`), and optional build metadata (e.g. `1.2.3+build.1`). Invalid versions — leading zeros, `_`, or empty identifiers — are rejected.
+
+Ordering is SemVer precedence: newest release first, and prerelease identifiers compared per spec (`1.0.0-beta.10` is newer than `1.0.0-beta.2`). A `v` prefix is ignored for comparison, so `v1.0.0` and `1.0.0` are the same release. Output commands (`get-version`, `validate --json`) preserve the version exactly as written in the changelog.
 
 ## Configuration
 
