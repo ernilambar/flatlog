@@ -3,11 +3,13 @@
 /**
  * flatlog - The Customizable, Flat Changelog Utility Belt
  * Commands:
- * - init                         : Generates a baseline configuration and CHANGELOG.md.
- * - add                          : Intelligently inserts a placeholder block or an active bullet item.
- * - validate [<version>] [--json] : Audits structural integrity, layout conventions, and rules.
- * - get-version                  : Extracts the highest parsed stable release version string.
- * - get-release-notes            : Isolates markdown bullet content for the latest release.
+ * - init                                     : Generates a baseline configuration and CHANGELOG.md.
+ * - bullet "<Prefix: text>"                  : Inserts a bullet item, creating an unreleased block if needed.
+ * - release <version>                        : Promotes the unreleased placeholder to a versioned release header.
+ * - next                                     : Adds a fresh unreleased block after a release.
+ * - validate [<version>] [--json] [--quiet]  : Audits structural integrity, layout conventions, and rules.
+ * - get-version                              : Extracts the highest parsed stable release version string.
+ * - get-release-notes [<version>]            : Isolates markdown bullet content for a release.
  */
 
 const fs = require('fs')
@@ -64,6 +66,14 @@ if (fs.existsSync(configPath)) {
         console.warn(`${YELLOW}Warning: Config "versionPattern" must contain "{{version}}" and "YYYY-MM-DD". Using default.${RESET}`)
         continue
       }
+      if (key === 'titlePattern') {
+        try {
+          RegExp(value)
+        } catch (e) {
+          console.warn(`${YELLOW}Warning: Config "titlePattern" is not a valid regular expression. Using default.${RESET}`)
+          continue
+        }
+      }
       validated[key] = value
     }
     config = { ...defaultConfig, ...validated }
@@ -86,12 +96,29 @@ if (unknownFlag) {
   process.exit(1)
 }
 
-const command = argv._[0]
+// Derive positional args from raw argv so numeric-looking values are not coerced by minimist
+const positionals = []
+const rawArgs = process.argv.slice(2)
+for (let i = 0; i < rawArgs.length; i++) {
+  const arg = rawArgs[i]
+  if (arg === '--') {
+    positionals.push(...rawArgs.slice(i + 1))
+    break
+  }
+  if (arg === '--file' || arg === '-f') {
+    i++
+    continue
+  }
+  if (arg.startsWith('-')) continue
+  positionals.push(arg)
+}
+
+const positionalArgs = positionals
+const command = positionalArgs[0]
 
 const isJsonMode = argv.json
 const isQuiet = argv.quiet
 const isDryRun = argv['dry-run']
-const positionalArgs = argv._
 
 if (argv.version) {
   const pkg = require('../package.json')
@@ -126,10 +153,11 @@ Options:
 }
 
 // --- INTELLIGENT COMPILER ENGINE FOR VERSION PLACEHOLDERS ---
-const today = new Date().toISOString().split('T')[0]
+const now = new Date()
+const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
 const escapeRegex = (str) => str.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&')
 
-const versionPart = 'v?\\d+(?:\\.\\d+)+(?:-[\\w.]+)?'
+const versionPart = 'v?\\d+\\.\\d+\\.\\d+(?:-[\\w.]+)?'
 const versionInputRegex = new RegExp(`^${versionPart}$`)
 
 const compareVersions = (a, b) => {
@@ -310,7 +338,7 @@ if (command === 'release') {
     process.stdout.write(releaseLines.join('\n'))
   } else {
     fs.writeFileSync(filePath, releaseLines.join('\n'), 'utf8')
-    console.log(newHeader)
+    console.log(`${GREEN}✔${RESET} Released ${releaseVersion}. ${newHeader}`)
   }
   process.exit(0)
 }
@@ -354,7 +382,17 @@ if (!fs.existsSync(filePath)) {
   process.exit(1)
 }
 
-const expectedVersion = positionalArgs[0] || null
+const expectedVersion = command === 'validate' ? (positionalArgs[0] || null) : null
+
+if (expectedVersion && !versionInputRegex.test(expectedVersion)) {
+  const message = `Invalid version "${expectedVersion}". Expected format: X.Y.Z (optionally prefixed with "v" or suffixed with prerelease, e.g. v1.2.3-beta.1)`
+  if (isJsonMode) {
+    console.log(JSON.stringify({ success: false, errors: [{ line: 0, message }], warnings: [] }))
+  } else {
+    console.error(`${RED}Error: ${message}${RESET}`)
+  }
+  process.exit(1)
+}
 
 const content = fs.readFileSync(filePath, 'utf8')
 const lines = content.split(/\r?\n/)
@@ -403,7 +441,8 @@ lines.forEach((rawLine, index) => {
       report.errors.push({ line: lineNum, message: `Invalid date: ${extractedDate}` })
     }
 
-    if (versionsFound.includes(extractedVersion)) {
+    const isDuplicate = versionsFound.includes(extractedVersion)
+    if (isDuplicate) {
       report.errors.push({ line: lineNum, message: `Version ${extractedVersion} is listed more than once.` })
     } else if (currentVersion && currentVersion !== 'placeholder') {
       const isOlder = compareVersions(extractedVersion, currentVersion) < 0
@@ -418,7 +457,7 @@ lines.forEach((rawLine, index) => {
 
     currentVersion = extractedVersion
     currentVersionDate = extractedDate
-    versionsFound.push(extractedVersion)
+    if (!isDuplicate) versionsFound.push(extractedVersion)
     return
   }
 

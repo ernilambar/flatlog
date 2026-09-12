@@ -22,15 +22,14 @@
     "flatlog": "./bin/flatlog.js"
   },
   "files": [
+    ".flatlogrc.json",
     "bin",
     "CHANGELOG.md",
-    "CHANGELOG_GUIDE.md",
-    "README.md",
-    "LICENSE"
+    "CHANGELOG_GUIDE.md"
   ],
   "scripts": {
-    "lint": "eslint .",
     "format": "eslint . --fix",
+    "lint": "eslint .",
     "test": "node --test"
   },
   "dependencies": {
