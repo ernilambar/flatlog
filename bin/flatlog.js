@@ -85,12 +85,12 @@ if (fs.existsSync(configPath)) {
 
 // 3. Process CLI Parameters
 const argv = minimist(process.argv.slice(2), {
-  boolean: ['json', 'quiet', 'dry-run', 'help', 'version'],
+  boolean: ['json', 'quiet', 'dry-run', 'help', 'version', 'stable'],
   string: ['file'],
   alias: { f: 'file', h: 'help', v: 'version' }
 })
 
-const knownFlags = new Set(['_', 'json', 'quiet', 'dry-run', 'help', 'version', 'file', 'f', 'h', 'v'])
+const knownFlags = new Set(['_', 'json', 'quiet', 'dry-run', 'help', 'version', 'stable', 'file', 'f', 'h', 'v'])
 const unknownFlag = Object.keys(argv).find(key => !knownFlags.has(key))
 if (unknownFlag) {
   console.error(`${RED}Error: Unknown option "--${unknownFlag}". Run "flatlog --help" for usage.${RESET}`)
@@ -138,7 +138,7 @@ Commands:
   next                   Add a new unreleased block (use this after a release)
   validate [<version>]   Validate changelog structure. If <version> is given,
                           also enforce the topmost version matches it
-  get-version            Print the topmost stable version
+  get-version            Print the topmost released version
   get-release-notes      Print bullet notes for the latest release
   get-release-notes <v>  Print bullet notes for a specific version
 
@@ -147,6 +147,7 @@ Options:
   --json                 Output results as JSON (validate only)
   --quiet                Suppress output on success (validate only)
   --dry-run              Preview changes without writing (bullet, release, next)
+  --stable               With get-version/get-release-notes, ignore prereleases
   --version, -v          Print flatlog version
   --help, -h             Show this help message
 `.trim())
@@ -166,6 +167,7 @@ const semverBuildId = '[0-9a-zA-Z-]+'
 const versionPart = `v?(?:${semverNumericId})\\.(?:${semverNumericId})\\.(?:${semverNumericId})(?:-(?:${semverPrereleaseId})(?:\\.(?:${semverPrereleaseId}))*)?(?:\\+(?:${semverBuildId})(?:\\.(?:${semverBuildId}))*)?`
 
 const isValidVersion = (value) => semver.valid(value) !== null
+const invalidVersionMessage = (value) => `Invalid version "${value}". Expected format: X.Y.Z (optionally prefixed with "v" or suffixed with prerelease, e.g. v1.2.3-beta.1)`
 
 // Canonical identity used for duplicate detection and equality (drops "v" prefix and build metadata).
 const normalizeVersion = (value) => {
@@ -202,6 +204,25 @@ const knownCommands = ['init', 'bullet', 'release', 'next', 'validate', 'get-ver
 if (command && !knownCommands.includes(command)) {
   console.error(`${RED}Error: Unknown command "${command}". Run "flatlog --help" for usage.${RESET}`)
   process.exit(1)
+}
+
+if (!command) {
+  console.error(`${RED}Error: No command given. Run "flatlog --help" for usage.${RESET}`)
+  process.exit(1)
+}
+
+// Reject options that are valid but do not apply to the invoked command
+const flagScope = {
+  json: ['validate'],
+  quiet: ['validate'],
+  'dry-run': ['bullet', 'release', 'next'],
+  stable: ['get-version', 'get-release-notes']
+}
+for (const [flag, commands] of Object.entries(flagScope)) {
+  if (argv[flag] === true && !commands.includes(command)) {
+    console.error(`${RED}Error: Option "--${flag}" is not supported by the "${command}" command.${RESET}`)
+    process.exit(1)
+  }
 }
 
 // --- COMMAND: INIT ---
@@ -304,7 +325,7 @@ if (command === 'release') {
   }
 
   if (!isValidVersion(releaseVersion)) {
-    console.error(`${RED}Error: Invalid version "${releaseVersion}". Expected format: X.Y.Z (optionally prefixed with "v" or suffixed with prerelease, e.g. v1.2.3-beta.1)${RESET}`)
+    console.error(`${RED}Error: ${invalidVersionMessage(releaseVersion)}${RESET}`)
     process.exit(1)
   }
 
@@ -330,6 +351,17 @@ if (command === 'release') {
   if (alreadyExists) {
     console.error(`${RED}Error: Version ${releaseVersion} already exists in "${targetFile}".${RESET}`)
     process.exit(1)
+  }
+
+  const topmostRelease = releaseLines
+    .map(line => line.trim().match(compiledVersionRegex))
+    .find(match => match !== null)
+  if (topmostRelease) {
+    const topmostVersion = topmostRelease[versionGroup]
+    if (compareVersions(releaseNormalized, normalizeVersion(topmostVersion)) < 0) {
+      console.error(`${RED}Error: Version ${releaseVersion} is older than the current release ${topmostVersion}. Newest releases must come first.${RESET}`)
+      process.exit(1)
+    }
   }
 
   const newHeader = config.versionPattern.replace('{{version}}', releaseVersion).replace('YYYY-MM-DD', today)
@@ -385,7 +417,7 @@ if (!fs.existsSync(filePath)) {
 const expectedVersion = command === 'validate' ? (positionalArgs[0] || null) : null
 
 if (expectedVersion && !isValidVersion(expectedVersion)) {
-  const message = `Invalid version "${expectedVersion}". Expected format: X.Y.Z (optionally prefixed with "v" or suffixed with prerelease, e.g. v1.2.3-beta.1)`
+  const message = invalidVersionMessage(expectedVersion)
   if (isJsonMode) {
     console.log(JSON.stringify({ success: false, errors: [{ line: 0, message }], warnings: [] }))
   } else {
@@ -403,6 +435,7 @@ let currentVersion = null
 let currentVersionNormalized = null
 let currentVersionDate = null
 let hasPlaceholder = false
+let latestStableVersion = null
 const versionsFound = []
 
 lines.forEach((rawLine, index) => {
@@ -416,9 +449,13 @@ lines.forEach((rawLine, index) => {
     return
   }
 
-  if (rawLine.startsWith('  ') || rawLine.startsWith('\t')) {
+  if (rawLine !== rawLine.trimStart()) {
     if (line.startsWith(config.bulletSign)) {
       report.errors.push({ line: lineNum, message: 'Indented bullets are not allowed. Use flat lists only.' })
+      return
+    }
+    if (compiledVersionRegex.test(line) || compiledPlaceholderRegex.test(line)) {
+      report.errors.push({ line: lineNum, message: 'Indented version headers are not allowed. Use flat headers only.' })
       return
     }
   }
@@ -439,6 +476,7 @@ lines.forEach((rawLine, index) => {
     const extractedDate = versionMatch[dateGroup]
     const normalizedVersion = normalizeVersion(extractedVersion)
     if (!report.metadata.topmostVersion) report.metadata.topmostVersion = extractedVersion
+    if (!latestStableVersion && normalizedVersion && semver.prerelease(normalizedVersion) === null) latestStableVersion = extractedVersion
 
     if (isNaN(new Date(extractedDate))) {
       report.errors.push({ line: lineNum, message: `Invalid date: ${extractedDate}` })
@@ -507,15 +545,21 @@ if (report.errors.length > 0) report.success = false
 
 // --- COMMAND: GET-VERSION ---
 if (command === 'get-version') {
-  if (!report.metadata.topmostVersion) process.exit(1)
-  console.log(report.metadata.topmostVersion)
+  const versionToPrint = argv.stable ? latestStableVersion : report.metadata.topmostVersion
+  if (!versionToPrint) process.exit(1)
+  console.log(versionToPrint)
   process.exit(0)
 }
 
 // --- COMMAND: GET-RELEASE-NOTES ---
 if (command === 'get-release-notes') {
   const requestedVersion = positionalArgs[0] || null
-  const targetVersion = requestedVersion || report.metadata.topmostVersion
+  if (requestedVersion && !isValidVersion(requestedVersion)) {
+    console.error(`${RED}Error: ${invalidVersionMessage(requestedVersion)}${RESET}`)
+    process.exit(1)
+  }
+  const defaultVersion = argv.stable ? latestStableVersion : report.metadata.topmostVersion
+  const targetVersion = requestedVersion || defaultVersion
   if (!targetVersion) process.exit(1)
 
   let capture = false

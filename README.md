@@ -39,8 +39,10 @@ flatlog next                         # Add a new unreleased block (use this afte
 flatlog validate                     # Audit changelog structure
 flatlog validate <version>           # Also enforce topmost version matches <version>
 flatlog validate --json              # Output results as JSON
-flatlog get-version                  # Print the latest stable release version
+flatlog get-version                  # Print the topmost released version
+flatlog get-version --stable         # Same, but ignore prereleases
 flatlog get-release-notes            # Print bullet items for the latest release
+flatlog get-release-notes --stable   # Print bullet items for the latest stable release
 flatlog get-release-notes <version>  # Print bullet items for a specific version
 flatlog --version, -v                # Print flatlog version
 flatlog --help, -h                   # Show usage help
@@ -64,12 +66,12 @@ All commands exit `0` on success and `1` on failure.
 | --- | --- |
 | `init` | the target file already exists, or it cannot be written |
 | `bullet` | the file is missing, no bullet text is given, or the prefix is not in `allowedPrefixes` |
-| `release` | the file is missing, `<version>` is invalid or already listed, or no placeholder exists |
+| `release` | the file is missing, `<version>` is invalid, already listed, or older than the current release, or no placeholder exists |
 | `next` | the file is missing, or an unreleased block already exists |
 | `validate` | any validation error is found |
-| `get-version` | no released version exists |
+| `get-version` | no released version exists, or no stable release exists with `--stable` |
 | `get-release-notes` | the requested version (or any release) is not found |
-| any | the command or an option is unknown |
+| any | no command is given, the command or an option is unknown, or a recognized option is not supported by the command |
 
 ## JSON output
 
@@ -104,7 +106,9 @@ Each entry in `errors` and `warnings` carries a `line` (1-based; `0` for file-le
 
 Versions follow strict [SemVer 2.0.0](https://semver.org/): `X.Y.Z`, with an optional `v` prefix, an optional prerelease suffix (e.g. `v1.2.3-beta.1`), and optional build metadata (e.g. `1.2.3+build.1`). Invalid versions — leading zeros, `_`, or empty identifiers — are rejected.
 
-Ordering is SemVer precedence: newest release first, and prerelease identifiers compared per spec (`1.0.0-beta.10` is newer than `1.0.0-beta.2`). A `v` prefix is ignored for comparison, so `v1.0.0` and `1.0.0` are the same release. Output commands (`get-version`, `validate --json`) preserve the version exactly as written in the changelog.
+Ordering is SemVer precedence: newest release first, and prerelease identifiers compared per spec (`1.0.0-beta.10` is newer than `1.0.0-beta.2`). A `v` prefix is ignored for comparison, so `v1.0.0` and `1.0.0` are the same release. Output commands (`get-version`, `validate --json`) preserve the version exactly as written in the changelog, including build metadata.
+
+By default `get-version` and `get-release-notes` select the **topmost** release — prereleases included, so you always get the release you just cut. Pass `--stable` to select the highest non-prerelease release instead (`get-version --stable` exits `1` if the changelog has only prereleases).
 
 ## Configuration
 

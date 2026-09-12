@@ -1,9 +1,11 @@
 # flatlog Changelog
 
 ## 2.0.0 - 2026-09-12
+- Added: `--stable` flag for `get-version` and `get-release-notes`
 - Changed: version validation now follows SemVer 2.0.0 strictly
-- Changed: invalid versions (leading zeros, `_`, empty identifiers) are now rejected
-- Fixed: prerelease ordering compares numeric identifiers numerically (`beta.10` > `beta.2`)
+- Changed: invalid versions are now rejected
+- Changed: `release` rejects a version older than the current release
+- Changed: running `flatlog` with no command now exits with an error instead of implicitly validating
 - Fixed: `v`-prefixed and unprefixed versions are treated as the same release
 
 ## 1.0.4 - 2026-08-02
