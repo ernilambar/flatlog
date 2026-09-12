@@ -15,6 +15,7 @@
 const fs = require('fs')
 const path = require('path')
 const minimist = require('minimist')
+const semver = require('semver')
 
 // 1. Core Default Configuration Matrix
 const defaultConfig = {
@@ -157,26 +158,24 @@ const now = new Date()
 const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
 const escapeRegex = (str) => str.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&')
 
-const versionPart = 'v?\\d+\\.\\d+\\.\\d+(?:-[\\w.]+)?'
-const versionInputRegex = new RegExp(`^${versionPart}$`)
+// Strict SemVer 2.0.0 token (optional leading "v") used to match version headers.
+// Every inner group is non-capturing so header capture-group indices stay stable.
+const semverNumericId = '0|[1-9]\\d*'
+const semverPrereleaseId = '(?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*)'
+const semverBuildId = '[0-9a-zA-Z-]+'
+const versionPart = `v?(?:${semverNumericId})\\.(?:${semverNumericId})\\.(?:${semverNumericId})(?:-(?:${semverPrereleaseId})(?:\\.(?:${semverPrereleaseId}))*)?(?:\\+(?:${semverBuildId})(?:\\.(?:${semverBuildId}))*)?`
+
+const isValidVersion = (value) => semver.valid(value) !== null
+
+// Canonical identity used for duplicate detection and equality (drops "v" prefix and build metadata).
+const normalizeVersion = (value) => {
+  const parsed = semver.parse(value)
+  return parsed ? parsed.version : null
+}
 
 const compareVersions = (a, b) => {
-  const parse = (v) => {
-    const [core, pre] = v.replace(/^v/, '').split(/-(.+)/)
-    return { nums: core.split('.').map(Number), pre: pre || null }
-  }
-  const pa = parse(a)
-  const pb = parse(b)
-  const len = Math.max(pa.nums.length, pb.nums.length)
-  for (let i = 0; i < len; i++) {
-    const x = pa.nums[i] ?? 0
-    const y = pb.nums[i] ?? 0
-    if (x !== y) return x - y
-  }
-  if (!pa.pre && pb.pre) return 1
-  if (pa.pre && !pb.pre) return -1
-  if (pa.pre === pb.pre) return 0
-  return pa.pre < pb.pre ? -1 : 1
+  if (!a || !b || !isValidVersion(a) || !isValidVersion(b)) return 0
+  return semver.compare(a, b)
 }
 
 const universalToken = 'X.X.X'
@@ -304,7 +303,7 @@ if (command === 'release') {
     process.exit(1)
   }
 
-  if (!versionInputRegex.test(releaseVersion)) {
+  if (!isValidVersion(releaseVersion)) {
     console.error(`${RED}Error: Invalid version "${releaseVersion}". Expected format: X.Y.Z (optionally prefixed with "v" or suffixed with prerelease, e.g. v1.2.3-beta.1)${RESET}`)
     process.exit(1)
   }
@@ -323,9 +322,10 @@ if (command === 'release') {
     process.exit(1)
   }
 
+  const releaseNormalized = normalizeVersion(releaseVersion)
   const alreadyExists = releaseLines.some(line => {
     const m = line.trim().match(compiledVersionRegex)
-    return m && m[versionGroup] === releaseVersion
+    return m && normalizeVersion(m[versionGroup]) === releaseNormalized
   })
   if (alreadyExists) {
     console.error(`${RED}Error: Version ${releaseVersion} already exists in "${targetFile}".${RESET}`)
@@ -384,7 +384,7 @@ if (!fs.existsSync(filePath)) {
 
 const expectedVersion = command === 'validate' ? (positionalArgs[0] || null) : null
 
-if (expectedVersion && !versionInputRegex.test(expectedVersion)) {
+if (expectedVersion && !isValidVersion(expectedVersion)) {
   const message = `Invalid version "${expectedVersion}". Expected format: X.Y.Z (optionally prefixed with "v" or suffixed with prerelease, e.g. v1.2.3-beta.1)`
   if (isJsonMode) {
     console.log(JSON.stringify({ success: false, errors: [{ line: 0, message }], warnings: [] }))
@@ -400,6 +400,7 @@ const lines = content.split(/\r?\n/)
 const report = { success: true, errors: [], warnings: [], metadata: { releasesChecked: 0, topmostVersion: null } }
 let titleFound = false
 let currentVersion = null
+let currentVersionNormalized = null
 let currentVersionDate = null
 let hasPlaceholder = false
 const versionsFound = []
@@ -427,6 +428,7 @@ lines.forEach((rawLine, index) => {
       report.errors.push({ line: lineNum, message: 'Unreleased block must be at the top of the changelog.' })
     }
     currentVersion = 'placeholder'
+    currentVersionNormalized = null
     hasPlaceholder = true
     return
   }
@@ -435,17 +437,18 @@ lines.forEach((rawLine, index) => {
     const versionMatch = line.match(compiledVersionRegex)
     const extractedVersion = versionMatch[versionGroup]
     const extractedDate = versionMatch[dateGroup]
+    const normalizedVersion = normalizeVersion(extractedVersion)
     if (!report.metadata.topmostVersion) report.metadata.topmostVersion = extractedVersion
 
     if (isNaN(new Date(extractedDate))) {
       report.errors.push({ line: lineNum, message: `Invalid date: ${extractedDate}` })
     }
 
-    const isDuplicate = versionsFound.includes(extractedVersion)
+    const isDuplicate = versionsFound.includes(normalizedVersion)
     if (isDuplicate) {
       report.errors.push({ line: lineNum, message: `Version ${extractedVersion} is listed more than once.` })
-    } else if (currentVersion && currentVersion !== 'placeholder') {
-      const isOlder = compareVersions(extractedVersion, currentVersion) < 0
+    } else if (currentVersionNormalized && currentVersion !== 'placeholder') {
+      const isOlder = compareVersions(normalizedVersion, currentVersionNormalized) < 0
       if (!isOlder) {
         report.errors.push({ line: lineNum, message: `Version ${extractedVersion} is out of order (should come before ${currentVersion}).` })
       }
@@ -456,8 +459,9 @@ lines.forEach((rawLine, index) => {
     }
 
     currentVersion = extractedVersion
+    currentVersionNormalized = normalizedVersion
     currentVersionDate = extractedDate
-    if (!isDuplicate) versionsFound.push(extractedVersion)
+    if (!isDuplicate) versionsFound.push(normalizedVersion)
     return
   }
 
@@ -494,7 +498,7 @@ report.metadata.releasesChecked = versionsFound.length
 if (expectedVersion) {
   if (hasPlaceholder) {
     report.errors.push({ line: 0, message: 'Unreleased block found. Run "flatlog release <version>" before publishing.' })
-  } else if (report.metadata.topmostVersion && expectedVersion !== report.metadata.topmostVersion) {
+  } else if (report.metadata.topmostVersion && normalizeVersion(expectedVersion) !== normalizeVersion(report.metadata.topmostVersion)) {
     report.errors.push({ line: 0, message: `Version mismatch: expected ${expectedVersion} but changelog has ${report.metadata.topmostVersion}.` })
   }
 }
@@ -517,6 +521,7 @@ if (command === 'get-release-notes') {
   let capture = false
   let found = false
   const notes = []
+  const targetNormalized = normalizeVersion(targetVersion)
 
   for (const rawLine of lines) {
     const line = rawLine.trim()
@@ -525,7 +530,7 @@ if (command === 'get-release-notes') {
 
     if (versionMatch || isPlaceholder) {
       if (capture) break
-      if (versionMatch && versionMatch[versionGroup] === targetVersion) {
+      if (versionMatch && normalizeVersion(versionMatch[versionGroup]) === targetNormalized) {
         capture = true
         found = true
       }

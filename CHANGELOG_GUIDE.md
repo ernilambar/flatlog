@@ -11,8 +11,8 @@ If a `.flatlogrc.json` exists in the repo root, its values override the defaults
 | Rule | Default |
 |---|---|
 | Title line (must appear exactly once, at the top) | matches `^# .*Changelog$`, e.g. `# Changelog` |
-| Version header format | `## X.Y.Z - YYYY-MM-DD` |
-| Version order | newest first, no duplicates |
+| Version header format | `## X.Y.Z - YYYY-MM-DD` (strict SemVer 2.0.0; optional `v` prefix, prerelease, build metadata) |
+| Version order | newest first by SemVer precedence, no duplicates |
 | Unreleased block (if any) | must be the topmost block, using literal placeholder `## X.X.X - YYYY-MM-DD` |
 | Bullet prefix | line starts with `- ` followed by one of `Added:`, `Changed:`, `Fixed:` |
 | First release exception | its sole bullet may instead read exactly `- Initial release` |
