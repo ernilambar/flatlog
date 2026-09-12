@@ -275,7 +275,7 @@ describe('flatlog validate', () => {
     const result = await runCli(['validate', '--json'], { cwd: testDir })
     const parsed = JSON.parse(result.stdout)
     assert.strictEqual(parsed.success, true)
-    assert(!parsed.warnings.some(w => /contradicts/.test(w.message)))
+    assert(!parsed.warnings.some(w => /newer than/.test(w.message)))
   })
 
   it('--quiet suppresses output on success', async () => {
@@ -963,10 +963,10 @@ describe('flatlog semver handling', () => {
 
   it('release accepts a hyphenated prerelease identifier', async () => {
     fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), CHANGELOG_WITH_PLACEHOLDER)
-    const result = await runCli(['release', '1.0.0-alpha-1'], { cwd: testDir })
+    const result = await runCli(['release', '1.1.0-alpha-1'], { cwd: testDir })
     assert.strictEqual(result.code, 0)
     const content = fs.readFileSync(path.join(testDir, 'CHANGELOG.md'), 'utf8')
-    assert.match(content, /## 1\.0\.0-alpha-1 - \d{4}-\d{2}-\d{2}/)
+    assert.match(content, /## 1\.1\.0-alpha-1 - \d{4}-\d{2}-\d{2}/)
   })
 
   it('get-release-notes finds a v-prefixed release by its plain version', async () => {
@@ -976,5 +976,176 @@ describe('flatlog semver handling', () => {
     assert.strictEqual(result.code, 0)
     assert.match(result.stdout, /Added: two\./)
     assert(!result.stdout.includes('Added: one.'))
+  })
+})
+
+describe('flatlog ordering and indentation guards', () => {
+  let testDir
+
+  beforeEach(() => { testDir = tmpTestDir('guards') })
+  afterEach(() => { fs.rmSync(testDir, { recursive: true }) })
+
+  it('release rejects a version older than the current release', async () => {
+    fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), CHANGELOG_WITH_PLACEHOLDER)
+    const result = await runCli(['release', '0.9.0'], { cwd: testDir })
+    assert.strictEqual(result.code, 1)
+    assert.match(result.stderr, /older than the current release 1\.0\.0/)
+    const content = fs.readFileSync(path.join(testDir, 'CHANGELOG.md'), 'utf8')
+    assert.match(content, /## X\.X\.X - YYYY-MM-DD/)
+  })
+
+  it('release still accepts a version newer than the current release', async () => {
+    fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), CHANGELOG_WITH_PLACEHOLDER)
+    const result = await runCli(['release', '2.0.0'], { cwd: testDir })
+    assert.strictEqual(result.code, 0)
+  })
+
+  it('release of a prerelease newer than the current release is allowed', async () => {
+    fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), CHANGELOG_WITH_PLACEHOLDER)
+    const result = await runCli(['release', '2.0.0-beta.1'], { cwd: testDir })
+    assert.strictEqual(result.code, 0)
+  })
+
+  it('exits 1 for a single-space indented bullet', async () => {
+    const sneaky = '# Test Changelog\n\n## 1.0.0 - 2024-01-01\n - Added: sneaky\n'
+    fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), sneaky)
+    const result = await runCli(['validate', '--json'], { cwd: testDir })
+    const parsed = JSON.parse(result.stdout)
+    assert.strictEqual(parsed.success, false)
+    assert(parsed.errors.some(e => /[Ii]ndented bullets/.test(e.message)))
+  })
+
+  it('exits 1 for an indented version header', async () => {
+    const indentedHeader = '# Test Changelog\n\n  ## 1.0.0 - 2024-01-01\n- Initial release\n'
+    fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), indentedHeader)
+    const result = await runCli(['validate', '--json'], { cwd: testDir })
+    const parsed = JSON.parse(result.stdout)
+    assert.strictEqual(parsed.success, false)
+    assert(parsed.errors.some(e => /[Ii]ndented version headers/.test(e.message)))
+  })
+
+  it('exits 1 for an indented unreleased placeholder', async () => {
+    const indentedPlaceholder = '# Test Changelog\n\n  ## X.X.X - YYYY-MM-DD\n- Added: wip.\n'
+    fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), indentedPlaceholder)
+    const result = await runCli(['validate', '--json'], { cwd: testDir })
+    const parsed = JSON.parse(result.stdout)
+    assert.strictEqual(parsed.success, false)
+    assert(parsed.errors.some(e => /[Ii]ndented version headers/.test(e.message)))
+  })
+})
+
+describe('flatlog --stable', () => {
+  let testDir
+
+  const MIXED = '# Test Changelog\n\n## 3.0.0-beta.1 - 2024-07-01\n- Added: beta feature.\n\n## 2.5.0 - 2024-06-01\n- Added: stable feature.\n'
+  const PRERELEASE_ONLY = '# Test Changelog\n\n## 1.0.0-rc.1 - 2024-01-01\n- Added: only prerelease.\n'
+
+  beforeEach(() => { testDir = tmpTestDir('stable') })
+  afterEach(() => { fs.rmSync(testDir, { recursive: true }) })
+
+  it('get-version returns the topmost version (including prerelease) by default', async () => {
+    fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), MIXED)
+    const result = await runCli(['get-version'], { cwd: testDir })
+    assert.strictEqual(result.code, 0)
+    assert.strictEqual(result.stdout.trim(), '3.0.0-beta.1')
+  })
+
+  it('get-version --stable returns the highest non-prerelease', async () => {
+    fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), MIXED)
+    const result = await runCli(['get-version', '--stable'], { cwd: testDir })
+    assert.strictEqual(result.code, 0)
+    assert.strictEqual(result.stdout.trim(), '2.5.0')
+  })
+
+  it('get-version --stable exits 1 when only prereleases exist', async () => {
+    fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), PRERELEASE_ONLY)
+    const result = await runCli(['get-version', '--stable'], { cwd: testDir })
+    assert.strictEqual(result.code, 1)
+  })
+
+  it('get-release-notes returns the topmost release notes by default', async () => {
+    fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), MIXED)
+    const result = await runCli(['get-release-notes'], { cwd: testDir })
+    assert.strictEqual(result.code, 0)
+    assert.match(result.stdout, /beta feature\./)
+    assert(!result.stdout.includes('stable feature.'))
+  })
+
+  it('get-release-notes --stable returns the stable release notes', async () => {
+    fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), MIXED)
+    const result = await runCli(['get-release-notes', '--stable'], { cwd: testDir })
+    assert.strictEqual(result.code, 0)
+    assert.match(result.stdout, /stable feature\./)
+    assert(!result.stdout.includes('beta feature.'))
+  })
+
+  it('get-version preserves build metadata as written', async () => {
+    const withBuild = '# Test Changelog\n\n## 1.2.3+build.5 - 2024-01-01\n- Added: one.\n'
+    fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), withBuild)
+    const result = await runCli(['get-version'], { cwd: testDir })
+    assert.strictEqual(result.code, 0)
+    assert.strictEqual(result.stdout.trim(), '1.2.3+build.5')
+  })
+
+  it('--stable is a recognized flag (not an unknown option)', async () => {
+    fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), MIXED)
+    const result = await runCli(['get-version', '--stable'], { cwd: testDir })
+    assert(!/Unknown option/.test(result.stderr))
+  })
+})
+
+describe('flatlog option scoping and argument errors', () => {
+  let testDir
+
+  beforeEach(() => { testDir = tmpTestDir('scoping') })
+  afterEach(() => { fs.rmSync(testDir, { recursive: true }) })
+
+  it('get-release-notes reports an invalid version argument', async () => {
+    fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), VALID_CHANGELOG)
+    const result = await runCli(['get-release-notes', 'not-a-version'], { cwd: testDir })
+    assert.strictEqual(result.code, 1)
+    assert.match(result.stderr, /Invalid version "not-a-version"/)
+  })
+
+  it('rejects --json on get-version', async () => {
+    fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), VALID_CHANGELOG)
+    const result = await runCli(['get-version', '--json'], { cwd: testDir })
+    assert.strictEqual(result.code, 1)
+    assert.match(result.stderr, /--json.*not supported by the "get-version" command/)
+  })
+
+  it('rejects --quiet on get-version', async () => {
+    fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), VALID_CHANGELOG)
+    const result = await runCli(['get-version', '--quiet'], { cwd: testDir })
+    assert.strictEqual(result.code, 1)
+    assert.match(result.stderr, /--quiet.*not supported by the "get-version" command/)
+  })
+
+  it('rejects --stable on validate', async () => {
+    fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), VALID_CHANGELOG)
+    const result = await runCli(['validate', '--stable'], { cwd: testDir })
+    assert.strictEqual(result.code, 1)
+    assert.match(result.stderr, /--stable.*not supported by the "validate" command/)
+  })
+
+  it('rejects --dry-run on validate', async () => {
+    fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), VALID_CHANGELOG)
+    const result = await runCli(['validate', '--dry-run'], { cwd: testDir })
+    assert.strictEqual(result.code, 1)
+    assert.match(result.stderr, /--dry-run.*not supported by the "validate" command/)
+  })
+
+  it('exits 1 with a hint when no command is given', async () => {
+    fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), VALID_CHANGELOG)
+    const result = await runCli([], { cwd: testDir })
+    assert.strictEqual(result.code, 1)
+    assert.match(result.stderr, /No command given/)
+  })
+
+  it('exits 1 when only a flag is given (no implicit validate)', async () => {
+    fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), VALID_CHANGELOG)
+    const result = await runCli(['--json'], { cwd: testDir })
+    assert.strictEqual(result.code, 1)
+    assert.match(result.stderr, /No command given/)
   })
 })

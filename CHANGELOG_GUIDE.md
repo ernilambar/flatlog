@@ -17,6 +17,7 @@ If a `.flatlogrc.json` exists in the repo root, its values override the defaults
 | Bullet prefix | line starts with `- ` followed by one of `Added:`, `Changed:`, `Fixed:` |
 | First release exception | its sole bullet may instead read exactly `- Initial release` |
 | Bullets | flat — never indented, never nested |
+| Version headers | flat — never indented |
 | Line length | ≤ 120 characters (warning, not a hard error) |
 | Extra content | anything that isn't the title, a version header, the placeholder, or a bullet fails validation |
 
@@ -64,6 +65,7 @@ With an active unreleased block (topmost, literal placeholder text — not a rea
 | `Bullet found before any version header.` | Bullets must sit under a version header (or the unreleased placeholder), never above it. |
 | `Invalid prefix. Allowed: ...` | Start the bullet with one of the allowed prefixes, or use the exact initial-release text for the first release. |
 | `Indented bullets are not allowed. Use flat lists only.` | Remove leading whitespace/tabs before `- `. |
+| `Indented version headers are not allowed. Use flat headers only.` | Remove leading whitespace before `##`. |
 | `Unexpected content.` | Delete stray lines — only the title, version headers, the placeholder, and bullets are allowed. |
 | `Line too long (N chars, max 120).` | Shorten the bullet text (warning only, won't fail validation on its own). |
 
@@ -76,4 +78,4 @@ Before running `flatlog validate`:
 - [ ] Unreleased block (if any) is topmost
 - [ ] Version headers are newest-first, unique, with valid dates
 - [ ] Every bullet starts with `- ` + an allowed prefix (or is the initial-release line)
-- [ ] No indented bullets, no stray lines
+- [ ] No indented bullets or version headers, no stray lines
