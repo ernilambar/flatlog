@@ -2,6 +2,14 @@
 
 The Customizable, Flat Changelog Utility Belt.
 
+[![npm version](https://img.shields.io/npm/v/@nilambar/flatlog)](https://www.npmjs.com/package/@nilambar/flatlog)
+[![CI](https://github.com/ernilambar/flatlog/actions/workflows/ci.yml/badge.svg)](https://github.com/ernilambar/flatlog/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/github/license/ernilambar/flatlog)](LICENSE)
+
+## Requirements
+
+Node.js >= 22.
+
 ## Installation
 
 ```bash
@@ -48,13 +56,57 @@ flatlog release 1.2.0                # Publish when ready
 
 By default all commands target `CHANGELOG.md`. Use `--file` / `-f` to target a different file.
 
+## Exit codes
+
+All commands exit `0` on success and `1` on failure.
+
+| Command | Exits `1` when |
+| --- | --- |
+| `init` | the target file already exists, or it cannot be written |
+| `bullet` | the file is missing, no bullet text is given, or the prefix is not in `allowedPrefixes` |
+| `release` | the file is missing, `<version>` is invalid or already listed, or no placeholder exists |
+| `next` | the file is missing, or an unreleased block already exists |
+| `validate` | any validation error is found |
+| `get-version` | no released version exists |
+| `get-release-notes` | the requested version (or any release) is not found |
+| any | the command or an option is unknown |
+
+## JSON output
+
+`flatlog validate --json` prints a machine-readable report to stdout.
+
+```json
+{
+  "success": true,
+  "errors": [],
+  "warnings": [],
+  "metadata": {
+    "releasesChecked": 2,
+    "topmostVersion": "1.0.4"
+  }
+}
+```
+
+Failures use the same shape with `success: false` and populated `errors`:
+
+```json
+{
+  "success": false,
+  "errors": [{ "line": 7, "message": "Invalid prefix. Allowed: Added:, Changed:, Fixed:" }],
+  "warnings": [{ "line": 12, "message": "Line too long (135 chars, max 120)." }],
+  "metadata": { "releasesChecked": 2, "topmostVersion": "1.0.4" }
+}
+```
+
+Each entry in `errors` and `warnings` carries a `line` (1-based; `0` for file-level issues) and a `message`. When the target file does not exist, the JSON output contains only `success`, `errors`, and `warnings` — no `metadata`.
+
 ## Version format
 
 Versions follow `X.Y.Z` semver, with optional `v` prefix and prerelease suffix (e.g. `v1.2.3-beta.1`).
 
 ## Configuration
 
-Create a `.flatlogrc.json` in your project root to override any defaults:
+Copy the shipped `.flatlogrc.json` example into your project root, then customize any defaults:
 
 ```json
 {
@@ -70,6 +122,19 @@ Create a `.flatlogrc.json` in your project root to override any defaults:
 ## AI agents
 
 Point your AI agent at [CHANGELOG_GUIDE.md](CHANGELOG_GUIDE.md) (also shipped in `node_modules/@nilambar/flatlog/`) before it writes changelog entries — it documents the format `flatlog validate` enforces, with a worked example and an error-to-fix table.
+
+## Development
+
+Requires Node.js >= 22. There is no build step — the CLI entry point is `bin/flatlog.js` (CommonJS).
+
+```bash
+npm ci          # install dependencies
+npm run lint    # lint with eslint (neostandard)
+npm run format  # auto-fix lint issues
+npm test        # run tests with node --test
+```
+
+Both `npm run lint` and `npm test` must pass before a change is ready. Bug reports and pull requests are welcome via the [issue tracker](https://github.com/ernilambar/flatlog/issues).
 
 ## License
 

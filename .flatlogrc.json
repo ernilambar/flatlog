@@ -1,0 +1,8 @@
+{
+  "titlePattern": "^# .*Changelog$",
+  "versionPattern": "## {{version}} - YYYY-MM-DD",
+  "bulletSign": "- ",
+  "allowedPrefixes": ["Added:", "Changed:", "Fixed:"],
+  "initialReleaseText": "Initial release",
+  "maxLineLength": 120
+}

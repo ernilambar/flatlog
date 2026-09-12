@@ -76,6 +76,38 @@ describe('config schema validation', () => {
     assert.strictEqual(result.code, 0)
     assert(!result.stderr.includes('Warning'))
   })
+
+  it('falls back to defaults on malformed JSON and still validates', async () => {
+    fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), VALID_CHANGELOG)
+    fs.writeFileSync(path.join(testDir, '.flatlogrc.json'), '{ not valid json')
+    const result = await runCli(['validate'], { cwd: testDir })
+    assert.strictEqual(result.code, 0)
+    assert.match(result.stderr, /\.flatlogrc\.json is invalid/)
+  })
+
+  it('warns and falls back when versionPattern is missing required tokens', async () => {
+    fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), VALID_CHANGELOG)
+    fs.writeFileSync(path.join(testDir, '.flatlogrc.json'), JSON.stringify({ versionPattern: '## {{version}}' }))
+    const result = await runCli(['validate'], { cwd: testDir })
+    assert.strictEqual(result.code, 0)
+    assert.match(result.stderr, /must contain/)
+  })
+
+  it('warns and falls back when allowedPrefixes is empty', async () => {
+    fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), VALID_CHANGELOG)
+    fs.writeFileSync(path.join(testDir, '.flatlogrc.json'), JSON.stringify({ allowedPrefixes: [] }))
+    const result = await runCli(['validate'], { cwd: testDir })
+    assert.strictEqual(result.code, 0)
+    assert.match(result.stderr, /cannot be empty/)
+  })
+
+  it('warns and falls back when titlePattern is not a valid regex', async () => {
+    fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), VALID_CHANGELOG)
+    fs.writeFileSync(path.join(testDir, '.flatlogrc.json'), JSON.stringify({ titlePattern: '[unterminated' }))
+    const result = await runCli(['validate'], { cwd: testDir })
+    assert.strictEqual(result.code, 0)
+    assert.match(result.stderr, /not a valid regular expression/)
+  })
 })
 
 describe('flatlog init', () => {
@@ -102,10 +134,12 @@ describe('flatlog init', () => {
     assert.match(content, /## X\.X\.X - YYYY-MM-DD/)
   })
 
-  it('created file contains initial release header with today\'s date', async () => {
+  it('created file contains initial release header with today\'s local date', async () => {
     await runCli(['init'], { cwd: testDir })
     const content = fs.readFileSync(path.join(testDir, 'CHANGELOG.md'), 'utf8')
-    assert.match(content, /## 1\.0\.0 - \d{4}-\d{2}-\d{2}/)
+    const now = new Date()
+    const localDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+    assert(content.includes(`## 1.0.0 - ${localDate}`))
   })
 
   it('exits 1 if CHANGELOG.md already exists', async () => {
@@ -197,6 +231,7 @@ describe('flatlog validate', () => {
     const parsed = JSON.parse(result.stdout)
     assert.strictEqual(parsed.success, false)
     assert(parsed.errors.some(e => /[Dd]uplicate|more than once/.test(e.message)))
+    assert.strictEqual(parsed.metadata.releasesChecked, 1)
   })
 
   it('exits 1 for out-of-order versions', async () => {
@@ -265,6 +300,38 @@ describe('flatlog validate', () => {
     assert.strictEqual(result.code, 0)
     assert(result.stderr.length > 0)
     assert.strictEqual(result.stdout.trim(), '')
+  })
+
+  it('exits 1 for unexpected content', async () => {
+    const stray = '# Test Changelog\n\nStray text here.\n\n## 1.0.0 - 2024-01-01\n- Initial release\n'
+    fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), stray)
+    const result = await runCli(['validate', '--json'], { cwd: testDir })
+    assert.strictEqual(result.code, 1)
+    const parsed = JSON.parse(result.stdout)
+    assert(parsed.errors.some(e => /Unexpected content/.test(e.message)))
+  })
+
+  it('exits 1 for a bullet before any version header', async () => {
+    const orphan = '# Test Changelog\n\n- Added: Orphan bullet.\n\n## 1.0.0 - 2024-01-01\n- Initial release\n'
+    fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), orphan)
+    const result = await runCli(['validate', '--json'], { cwd: testDir })
+    assert.strictEqual(result.code, 1)
+    const parsed = JSON.parse(result.stdout)
+    assert(parsed.errors.some(e => /before any version header/.test(e.message)))
+  })
+
+  it('exits 1 when the target path is not a file', async () => {
+    fs.mkdirSync(path.join(testDir, 'CHANGELOG.md'))
+    const result = await runCli(['validate'], { cwd: testDir })
+    assert.strictEqual(result.code, 1)
+    assert.match(result.stderr, /is not a file/)
+  })
+
+  it('validates a changelog using CRLF line endings', async () => {
+    const crlf = '# Test Changelog\r\n\r\n## 1.0.0 - 2024-01-01\r\n- Initial release\r\n'
+    fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), crlf)
+    const result = await runCli(['validate'], { cwd: testDir })
+    assert.strictEqual(result.code, 0)
   })
 })
 
@@ -361,6 +428,7 @@ describe('flatlog release', () => {
     fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), CHANGELOG_WITH_PLACEHOLDER)
     const result = await runCli(['release', '2.1.0'], { cwd: testDir })
     assert.strictEqual(result.code, 0)
+    assert.match(result.stdout, /✔.*Released 2\.1\.0/)
     assert.match(result.stdout, /## 2\.1\.0 - \d{4}-\d{2}-\d{2}/)
   })
 
@@ -404,6 +472,53 @@ describe('flatlog bullet --dry-run', () => {
     assert.match(result.stdout, /- Fixed: typo/)
     const content = fs.readFileSync(path.join(testDir, 'CHANGELOG.md'), 'utf8')
     assert(!content.includes('Fixed: typo'))
+  })
+})
+
+describe('flatlog next', () => {
+  let testDir
+
+  beforeEach(() => { testDir = tmpTestDir('next') })
+  afterEach(() => { fs.rmSync(testDir, { recursive: true }) })
+
+  it('exits 1 if changelog does not exist', async () => {
+    const result = await runCli(['next'], { cwd: testDir })
+    assert.strictEqual(result.code, 1)
+    assert.match(result.stderr, /not found/)
+  })
+
+  it('exits 1 if an unreleased block already exists', async () => {
+    fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), CHANGELOG_WITH_PLACEHOLDER)
+    const result = await runCli(['next'], { cwd: testDir })
+    assert.strictEqual(result.code, 1)
+    assert.match(result.stderr, /already exists/)
+  })
+
+  it('exits 0 and inserts an unreleased block after the title', async () => {
+    fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), VALID_CHANGELOG)
+    const result = await runCli(['next'], { cwd: testDir })
+    assert.strictEqual(result.code, 0)
+    const lines = fs.readFileSync(path.join(testDir, 'CHANGELOG.md'), 'utf8').split('\n')
+    const titleIdx = lines.findIndex(l => /^# /.test(l))
+    assert.strictEqual(lines[titleIdx + 1], '')
+    assert.match(lines[titleIdx + 2], /## X\.X\.X - YYYY-MM-DD/)
+  })
+
+  it('preserves existing release entries', async () => {
+    fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), VALID_CHANGELOG)
+    await runCli(['next'], { cwd: testDir })
+    const content = fs.readFileSync(path.join(testDir, 'CHANGELOG.md'), 'utf8')
+    assert.match(content, /## 1\.0\.0 - 2024-01-01/)
+    assert.match(content, /Initial release/)
+  })
+
+  it('--dry-run prints modified content without writing file', async () => {
+    fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), VALID_CHANGELOG)
+    const result = await runCli(['next', '--dry-run'], { cwd: testDir })
+    assert.strictEqual(result.code, 0)
+    assert.match(result.stdout, /## X\.X\.X - YYYY-MM-DD/)
+    const content = fs.readFileSync(path.join(testDir, 'CHANGELOG.md'), 'utf8')
+    assert(!content.includes('X.X.X'))
   })
 })
 
@@ -475,6 +590,22 @@ describe('flatlog validate <version>', () => {
     assert.strictEqual(parsed.success, false)
     assert(parsed.errors.some(e => /mismatch/.test(e.message)))
   })
+
+  it('exits 1 for an invalid version argument', async () => {
+    fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), VALID_CHANGELOG)
+    const result = await runCli(['validate', 'not-a-version'], { cwd: testDir })
+    assert.strictEqual(result.code, 1)
+    assert.match(result.stderr, /Invalid version "not-a-version"/)
+  })
+
+  it('--json reports an invalid version argument', async () => {
+    fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), VALID_CHANGELOG)
+    const result = await runCli(['validate', 'not-a-version', '--json'], { cwd: testDir })
+    assert.strictEqual(result.code, 1)
+    const parsed = JSON.parse(result.stdout)
+    assert.strictEqual(parsed.success, false)
+    assert(parsed.errors.some(e => /Invalid version/.test(e.message)))
+  })
 })
 
 describe('flatlog unknown command', () => {
@@ -482,6 +613,119 @@ describe('flatlog unknown command', () => {
     const result = await runCli(['foobar'])
     assert.strictEqual(result.code, 1)
     assert.match(result.stderr, /Unknown command/)
+  })
+})
+
+describe('flatlog --help and --version', () => {
+  it('--help exits 0 and prints usage', async () => {
+    const result = await runCli(['--help'])
+    assert.strictEqual(result.code, 0)
+    assert.match(result.stdout, /Usage: flatlog/)
+  })
+
+  it('-h alias exits 0 and prints usage', async () => {
+    const result = await runCli(['-h'])
+    assert.strictEqual(result.code, 0)
+    assert.match(result.stdout, /Usage: flatlog/)
+  })
+
+  it('help command exits 0 and prints usage', async () => {
+    const result = await runCli(['help'])
+    assert.strictEqual(result.code, 0)
+    assert.match(result.stdout, /Usage: flatlog/)
+  })
+
+  it('--version exits 0 and prints a semver', async () => {
+    const result = await runCli(['--version'])
+    assert.strictEqual(result.code, 0)
+    assert.match(result.stdout.trim(), /^\d+\.\d+\.\d+$/)
+  })
+
+  it('-v alias exits 0 and prints a semver', async () => {
+    const result = await runCli(['-v'])
+    assert.strictEqual(result.code, 0)
+    assert.match(result.stdout.trim(), /^\d+\.\d+\.\d+$/)
+  })
+})
+
+describe('flatlog unknown option', () => {
+  let testDir
+
+  beforeEach(() => { testDir = tmpTestDir('unknown-option') })
+  afterEach(() => { fs.rmSync(testDir, { recursive: true }) })
+
+  it('exits 1 with an error for an unknown flag', async () => {
+    fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), VALID_CHANGELOG)
+    const result = await runCli(['validate', '--bogus'], { cwd: testDir })
+    assert.strictEqual(result.code, 1)
+    assert.match(result.stderr, /Unknown option "--bogus"/)
+  })
+})
+
+describe('flatlog --file / -f', () => {
+  let testDir
+
+  beforeEach(() => { testDir = tmpTestDir('file-flag') })
+  afterEach(() => { fs.rmSync(testDir, { recursive: true }) })
+
+  it('validate --file targets the given file', async () => {
+    fs.writeFileSync(path.join(testDir, 'CHANGES.md'), VALID_CHANGELOG)
+    const result = await runCli(['validate', '--file', 'CHANGES.md'], { cwd: testDir })
+    assert.strictEqual(result.code, 0)
+  })
+
+  it('validate -f targets the given file', async () => {
+    fs.writeFileSync(path.join(testDir, 'CHANGES.md'), VALID_CHANGELOG)
+    const result = await runCli(['validate', '-f', 'CHANGES.md'], { cwd: testDir })
+    assert.strictEqual(result.code, 0)
+  })
+
+  it('exits 1 when the given file is missing', async () => {
+    fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), VALID_CHANGELOG)
+    const result = await runCli(['validate', '--file', 'CHANGES.md'], { cwd: testDir })
+    assert.strictEqual(result.code, 1)
+    assert.match(result.stderr, /CHANGES\.md" not found/)
+  })
+
+  it('bullet writes to the given file and leaves the default untouched', async () => {
+    fs.writeFileSync(path.join(testDir, 'CHANGES.md'), CHANGELOG_WITH_PLACEHOLDER)
+    const result = await runCli(['bullet', 'Fixed: typo', '--file', 'CHANGES.md'], { cwd: testDir })
+    assert.strictEqual(result.code, 0)
+    const content = fs.readFileSync(path.join(testDir, 'CHANGES.md'), 'utf8')
+    assert(content.includes('- Fixed: typo'))
+    assert(!fs.existsSync(path.join(testDir, 'CHANGELOG.md')))
+  })
+
+  it('release writes to the file selected by -f', async () => {
+    fs.writeFileSync(path.join(testDir, 'CHANGES.md'), CHANGELOG_WITH_PLACEHOLDER)
+    const result = await runCli(['release', '2.0.0', '-f', 'CHANGES.md'], { cwd: testDir })
+    assert.strictEqual(result.code, 0)
+    const content = fs.readFileSync(path.join(testDir, 'CHANGES.md'), 'utf8')
+    assert.match(content, /## 2\.0\.0 - \d{4}-\d{2}-\d{2}/)
+    assert(!fs.existsSync(path.join(testDir, 'CHANGELOG.md')))
+  })
+
+  it('next writes to the file selected by --file', async () => {
+    fs.writeFileSync(path.join(testDir, 'CHANGES.md'), VALID_CHANGELOG)
+    const result = await runCli(['next', '--file', 'CHANGES.md'], { cwd: testDir })
+    assert.strictEqual(result.code, 0)
+    const content = fs.readFileSync(path.join(testDir, 'CHANGES.md'), 'utf8')
+    assert(content.includes('## X.X.X - YYYY-MM-DD'))
+    assert(!fs.existsSync(path.join(testDir, 'CHANGELOG.md')))
+  })
+
+  it('get-version reads from the file selected by --file', async () => {
+    fs.writeFileSync(path.join(testDir, 'CHANGES.md'), VALID_CHANGELOG)
+    const result = await runCli(['get-version', '--file', 'CHANGES.md'], { cwd: testDir })
+    assert.strictEqual(result.code, 0)
+    assert.strictEqual(result.stdout.trim(), '1.0.0')
+  })
+
+  it('get-release-notes reads from the file selected by --file', async () => {
+    fs.writeFileSync(path.join(testDir, 'CHANGES.md'), VALID_CHANGELOG)
+    const result = await runCli(['get-release-notes', '--file', 'CHANGES.md'], { cwd: testDir })
+    assert.strictEqual(result.code, 0)
+    assert.match(result.stdout, /Initial release/)
   })
 })
 
@@ -502,7 +746,7 @@ describe('flatlog release semver validation', () => {
     fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), CHANGELOG_WITH_PLACEHOLDER)
     const result = await runCli(['release', '1.0'], { cwd: testDir })
     assert.strictEqual(result.code, 1)
-    assert.match(result.stderr, /[Ii]nvalid version/)
+    assert.match(result.stderr, /Invalid version "1\.0"/)
   })
 
   it('exits 0 for valid semver', async () => {
@@ -559,6 +803,14 @@ describe('flatlog get-release-notes', () => {
     fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), VALID_CHANGELOG)
     const result = await runCli(['get-release-notes', '9.9.9'], { cwd: testDir })
     assert.strictEqual(result.code, 1)
+  })
+
+  it('skips the placeholder and prints notes for the topmost release', async () => {
+    fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), CHANGELOG_WITH_PLACEHOLDER)
+    const result = await runCli(['get-release-notes'], { cwd: testDir })
+    assert.strictEqual(result.code, 0)
+    assert.match(result.stdout, /Initial release/)
+    assert(!result.stdout.includes('Setup layout configuration tracking bounds'))
   })
 })
 
