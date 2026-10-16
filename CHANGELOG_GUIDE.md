@@ -15,6 +15,7 @@ If a `.flatlogrc.json` exists in the repo root, its values override the defaults
 | Version order | newest first by SemVer precedence, no duplicates |
 | Unreleased block (if any) | must be the topmost block, using literal placeholder `## X.X.X - YYYY-MM-DD` |
 | Bullet prefix | line starts with `- ` followed by one of `Added:`, `Changed:`, `Fixed:` |
+| Bullet order | within a block, group bullets in `allowedPrefixes` order: `Added:` → `Changed:` → `Fixed:` (disable with `enforcePrefixOrder: false`) |
 | First release exception | its sole bullet may instead read exactly `- Initial release` |
 | Bullets | flat — never indented, never nested |
 | Version headers | flat — never indented |
@@ -64,6 +65,7 @@ With an active unreleased block (topmost, literal placeholder text — not a rea
 | `Version X is out of order (should come before Y).` | Sort version headers newest to oldest. |
 | `Bullet found before any version header.` | Bullets must sit under a version header (or the unreleased placeholder), never above it. |
 | `Invalid prefix. Allowed: ...` | Start the bullet with one of the allowed prefixes, or use the exact initial-release text for the first release. |
+| `Bullet "X" is out of order.` | Run `flatlog validate --fix`, or move the bullet into its prefix group so each block reads `Added:` → `Changed:` → `Fixed:`. |
 | `Indented bullets are not allowed. Use flat lists only.` | Remove leading whitespace/tabs before `- `. |
 | `Indented version headers are not allowed. Use flat headers only.` | Remove leading whitespace before `##`. |
 | `Unexpected content.` | Delete stray lines — only the title, version headers, the placeholder, and bullets are allowed. |
@@ -78,4 +80,5 @@ Before running `flatlog validate`:
 - [ ] Unreleased block (if any) is topmost
 - [ ] Version headers are newest-first, unique, with valid dates
 - [ ] Every bullet starts with `- ` + an allowed prefix (or is the initial-release line)
+- [ ] Bullets within each block are grouped `Added:` → `Changed:` → `Fixed:`
 - [ ] No indented bullets or version headers, no stray lines

@@ -39,6 +39,7 @@ flatlog next                         # Add a new unreleased block (use this afte
 flatlog validate                     # Audit changelog structure
 flatlog validate <version>           # Also enforce topmost version matches <version>
 flatlog validate --json              # Output results as JSON
+flatlog validate --fix               # Reorder bullets by prefix group, then validate
 flatlog get-version                  # Print the topmost released version
 flatlog get-version --stable         # Same, but ignore prereleases
 flatlog get-release-notes            # Print bullet items for the latest release
@@ -121,9 +122,12 @@ Copy the shipped `.flatlogrc.json` example into your project root, then customiz
   "bulletSign": "- ",
   "allowedPrefixes": ["Added:", "Changed:", "Fixed:"],
   "initialReleaseText": "Initial release",
-  "maxLineLength": 120
+  "maxLineLength": 120,
+  "enforcePrefixOrder": true
 }
 ```
+
+`enforcePrefixOrder` (default `true`) makes `validate` require bullets within each block to be grouped in `allowedPrefixes` order (`Added:` → `Changed:` → `Fixed:` by default); `bullet` inserts each entry at the end of its group. Run `flatlog validate --fix` to reorder bullets automatically; other errors still need manual fixes.
 
 ## AI agents
 

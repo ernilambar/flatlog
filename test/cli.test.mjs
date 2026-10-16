@@ -379,7 +379,7 @@ describe('flatlog bullet', () => {
     await runCli(['bullet', 'Fixed: typo'], { cwd: testDir })
     const lines = fs.readFileSync(path.join(testDir, 'CHANGELOG.md'), 'utf8').split('\n')
     const placeholderIdx = lines.findIndex(l => l.includes('X.X.X'))
-    assert.strictEqual(lines[placeholderIdx + 1], '- Fixed: typo')
+    assert.strictEqual(lines[placeholderIdx + 2], '- Fixed: typo')
   })
 
   it('preserves existing release entries after inserting', async () => {
@@ -1147,5 +1147,200 @@ describe('flatlog option scoping and argument errors', () => {
     const result = await runCli(['--json'], { cwd: testDir })
     assert.strictEqual(result.code, 1)
     assert.match(result.stderr, /No command given/)
+  })
+})
+
+describe('flatlog enforcePrefixOrder', () => {
+  let testDir
+
+  const JUMBLED = `# Test Changelog
+
+## 2.0.0 - 2024-06-01
+- Fixed: a fix.
+- Added: a feature.
+- Changed: a tweak.
+
+## 1.0.0 - 2024-01-01
+- Initial release
+`
+
+  const ORDERED = `# Test Changelog
+
+## 2.0.0 - 2024-06-01
+- Added: a feature.
+- Changed: a tweak.
+- Fixed: a fix.
+
+## 1.0.0 - 2024-01-01
+- Initial release
+`
+
+  const enableOrder = () => fs.writeFileSync(path.join(testDir, '.flatlogrc.json'), JSON.stringify({ enforcePrefixOrder: true }))
+
+  beforeEach(() => { testDir = tmpTestDir('prefix-order') })
+  afterEach(() => { fs.rmSync(testDir, { recursive: true }) })
+
+  const disableOrder = () => fs.writeFileSync(path.join(testDir, '.flatlogrc.json'), JSON.stringify({ enforcePrefixOrder: false }))
+
+  it('enforces bullet order by default', async () => {
+    fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), JUMBLED)
+    const result = await runCli(['validate'], { cwd: testDir })
+    assert.strictEqual(result.code, 1)
+  })
+
+  it('ignores bullet order when disabled', async () => {
+    disableOrder()
+    fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), JUMBLED)
+    const result = await runCli(['validate'], { cwd: testDir })
+    assert.strictEqual(result.code, 0)
+  })
+
+  it('accepts grouped bullets when enabled', async () => {
+    enableOrder()
+    fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), ORDERED)
+    const result = await runCli(['validate'], { cwd: testDir })
+    assert.strictEqual(result.code, 0)
+  })
+
+  it('rejects a jumbled block when enabled', async () => {
+    enableOrder()
+    fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), JUMBLED)
+    const result = await runCli(['validate', '--json'], { cwd: testDir })
+    assert.strictEqual(result.code, 1)
+    const parsed = JSON.parse(result.stdout)
+    assert(parsed.errors.some(e => /Bullet "Added:" is out of order/.test(e.message)))
+  })
+
+  it('flags every bullet that trails a later group', async () => {
+    enableOrder()
+    fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), JUMBLED)
+    const result = await runCli(['validate', '--json'], { cwd: testDir })
+    const parsed = JSON.parse(result.stdout)
+    assert.strictEqual(parsed.errors.filter(e => /out of order/.test(e.message)).length, 2)
+  })
+
+  it('resets the expectation at each block boundary', async () => {
+    enableOrder()
+    const twoBlocks = '# Test Changelog\n\n## 2.0.0 - 2024-06-01\n- Fixed: only a fix.\n\n## 1.0.0 - 2024-01-01\n- Added: only a feature.\n'
+    fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), twoBlocks)
+    const result = await runCli(['validate'], { cwd: testDir })
+    assert.strictEqual(result.code, 0)
+  })
+
+  it('applies to the unreleased placeholder block', async () => {
+    enableOrder()
+    const placeholderJumbled = '# Test Changelog\n\n## X.X.X - YYYY-MM-DD\n- Fixed: a fix.\n- Added: a feature.\n\n## 1.0.0 - 2024-01-01\n- Initial release\n'
+    fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), placeholderJumbled)
+    const result = await runCli(['validate', '--json'], { cwd: testDir })
+    const parsed = JSON.parse(result.stdout)
+    assert.strictEqual(parsed.success, false)
+    assert(parsed.errors.some(e => /out of order/.test(e.message)))
+  })
+
+  it('exempts the initial-release line', async () => {
+    enableOrder()
+    fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), '# Test Changelog\n\n## 1.0.0 - 2024-01-01\n- Initial release\n')
+    const result = await runCli(['validate'], { cwd: testDir })
+    assert.strictEqual(result.code, 0)
+  })
+
+  it('follows the order of allowedPrefixes', async () => {
+    fs.writeFileSync(path.join(testDir, '.flatlogrc.json'), JSON.stringify({ enforcePrefixOrder: true, allowedPrefixes: ['Fixed:', 'Added:'] }))
+    fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), '# Test Changelog\n\n## 1.0.0 - 2024-01-01\n- Fixed: a fix.\n- Added: a feature.\n')
+    const result = await runCli(['validate'], { cwd: testDir })
+    assert.strictEqual(result.code, 0)
+  })
+
+  it('warns and keeps the default when the value is not a boolean', async () => {
+    fs.writeFileSync(path.join(testDir, '.flatlogrc.json'), JSON.stringify({ enforcePrefixOrder: 'yes' }))
+    fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), JUMBLED)
+    const result = await runCli(['validate'], { cwd: testDir })
+    assert.strictEqual(result.code, 1)
+    assert.match(result.stderr, /enforcePrefixOrder.*expects boolean/)
+  })
+
+  it('bullet inserts at the end of its prefix group when enabled', async () => {
+    enableOrder()
+    fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), '# Test Changelog\n\n## X.X.X - YYYY-MM-DD\n- Added: first.\n- Fixed: a fix.\n\n## 1.0.0 - 2024-01-01\n- Added: old.\n')
+    await runCli(['bullet', 'Fixed: another fix.'], { cwd: testDir })
+    await runCli(['bullet', 'Added: second.'], { cwd: testDir })
+    await runCli(['bullet', 'Changed: a tweak.'], { cwd: testDir })
+    const content = fs.readFileSync(path.join(testDir, 'CHANGELOG.md'), 'utf8')
+    assert.strictEqual(content, '# Test Changelog\n\n## X.X.X - YYYY-MM-DD\n- Added: first.\n- Added: second.\n- Changed: a tweak.\n- Fixed: a fix.\n- Fixed: another fix.\n\n## 1.0.0 - 2024-01-01\n- Added: old.\n')
+    const result = await runCli(['validate'], { cwd: testDir })
+    assert.strictEqual(result.code, 0)
+  })
+
+  it('bullet inserts directly under the placeholder when no earlier group exists', async () => {
+    enableOrder()
+    fs.writeFileSync(path.join(testDir, 'CHANGELOG.md'), '# Test Changelog\n\n## X.X.X - YYYY-MM-DD\n- Fixed: a fix.\n\n## 1.0.0 - 2024-01-01\n- Initial release\n')
+    await runCli(['bullet', 'Added: a feature.'], { cwd: testDir })
+    const content = fs.readFileSync(path.join(testDir, 'CHANGELOG.md'), 'utf8')
+    assert.match(content, /## X\.X\.X - YYYY-MM-DD\n- Added: a feature\.\n- Fixed: a fix\.\n/)
+  })
+})
+
+describe('flatlog validate --fix', () => {
+  let testDir
+  const changelogPath = () => path.join(testDir, 'CHANGELOG.md')
+
+  beforeEach(() => { testDir = tmpTestDir('fix') })
+  afterEach(() => { fs.rmSync(testDir, { recursive: true }) })
+
+  it('reorders bullets in every block and exits 0', async () => {
+    fs.writeFileSync(changelogPath(), '# Test Changelog\n\n## X.X.X - YYYY-MM-DD\n- Fixed: c.\n- Added: d.\n\n## 1.0.0 - 2024-01-01\n- Fixed: a.\n- Changed: b.\n')
+    const result = await runCli(['validate', '--fix'], { cwd: testDir })
+    assert.strictEqual(result.code, 0)
+    assert.match(result.stdout, /Bullet order fixed/)
+    assert.strictEqual(fs.readFileSync(changelogPath(), 'utf8'), '# Test Changelog\n\n## X.X.X - YYYY-MM-DD\n- Added: d.\n- Fixed: c.\n\n## 1.0.0 - 2024-01-01\n- Changed: b.\n- Fixed: a.\n')
+  })
+
+  it('keeps the original order within a prefix group', async () => {
+    fs.writeFileSync(changelogPath(), '# Test Changelog\n\n## 1.0.0 - 2024-01-01\n- Fixed: first.\n- Added: x.\n- Fixed: second.\n')
+    await runCli(['validate', '--fix'], { cwd: testDir })
+    assert.strictEqual(fs.readFileSync(changelogPath(), 'utf8'), '# Test Changelog\n\n## 1.0.0 - 2024-01-01\n- Added: x.\n- Fixed: first.\n- Fixed: second.\n')
+  })
+
+  it('leaves invalid, indented and blank lines in place and still reports them', async () => {
+    fs.writeFileSync(changelogPath(), '# Test Changelog\n\n## 1.0.0 - 2024-01-01\n- Fixed: a.\n- Bogus: b.\n\n- Added: c.\n  - Added: nested.\n')
+    const result = await runCli(['validate', '--fix', '--json'], { cwd: testDir })
+    assert.strictEqual(result.code, 1)
+    assert.strictEqual(fs.readFileSync(changelogPath(), 'utf8'), '# Test Changelog\n\n## 1.0.0 - 2024-01-01\n- Added: c.\n- Bogus: b.\n\n- Fixed: a.\n  - Added: nested.\n')
+    const parsed = JSON.parse(result.stdout)
+    assert(parsed.errors.every(e => !/out of order/.test(e.message)))
+    assert(parsed.errors.some(e => /Invalid prefix/.test(e.message)))
+    assert(parsed.errors.some(e => /Indented bullets/.test(e.message)))
+  })
+
+  it('does not write when already ordered', async () => {
+    fs.writeFileSync(changelogPath(), VALID_CHANGELOG)
+    const before = fs.statSync(changelogPath()).mtimeMs
+    const result = await runCli(['validate', '--fix'], { cwd: testDir })
+    assert.strictEqual(result.code, 0)
+    assert.doesNotMatch(result.stdout, /Bullet order fixed/)
+    assert.strictEqual(fs.statSync(changelogPath()).mtimeMs, before)
+  })
+
+  it('is a no-op when enforcePrefixOrder is disabled', async () => {
+    const jumbled = '# Test Changelog\n\n## 1.0.0 - 2024-01-01\n- Fixed: a.\n- Added: b.\n'
+    fs.writeFileSync(path.join(testDir, '.flatlogrc.json'), JSON.stringify({ enforcePrefixOrder: false }))
+    fs.writeFileSync(changelogPath(), jumbled)
+    const result = await runCli(['validate', '--fix'], { cwd: testDir })
+    assert.strictEqual(result.code, 0)
+    assert.strictEqual(fs.readFileSync(changelogPath(), 'utf8'), jumbled)
+  })
+
+  it('keeps --json output pure JSON', async () => {
+    fs.writeFileSync(changelogPath(), '# Test Changelog\n\n## 1.0.0 - 2024-01-01\n- Fixed: a.\n- Added: b.\n')
+    const result = await runCli(['validate', '--fix', '--json'], { cwd: testDir })
+    assert.strictEqual(result.code, 0)
+    assert.strictEqual(JSON.parse(result.stdout).success, true)
+  })
+
+  it('rejects --fix on other commands', async () => {
+    fs.writeFileSync(changelogPath(), VALID_CHANGELOG)
+    const result = await runCli(['get-version', '--fix'], { cwd: testDir })
+    assert.strictEqual(result.code, 1)
+    assert.match(result.stderr, /--fix.*not supported by the "get-version" command/)
   })
 })

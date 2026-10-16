@@ -1,5 +1,10 @@
 # flatlog Changelog
 
+## 2.0.1 - 2026-10-16
+- Added: `enforcePrefixOrder` option to require grouped bullet order
+- Added: `validate --fix` to reorder bullets automatically
+- Changed: `bullet` inserts each entry at the end of its prefix group
+
 ## 2.0.0 - 2026-09-12
 - Added: `--stable` flag for `get-version` and `get-release-notes`
 - Changed: version validation now follows SemVer 2.0.0 strictly
