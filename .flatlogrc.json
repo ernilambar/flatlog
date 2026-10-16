@@ -4,5 +4,6 @@
   "bulletSign": "- ",
   "allowedPrefixes": ["Added:", "Changed:", "Fixed:"],
   "initialReleaseText": "Initial release",
-  "maxLineLength": 120
+  "maxLineLength": 120,
+  "enforcePrefixOrder": true
 }

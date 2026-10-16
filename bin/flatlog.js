@@ -7,7 +7,7 @@
  * - bullet "<Prefix: text>"                  : Inserts a bullet item, creating an unreleased block if needed.
  * - release <version>                        : Promotes the unreleased placeholder to a versioned release header.
  * - next                                     : Adds a fresh unreleased block after a release.
- * - validate [<version>] [--json] [--quiet]  : Audits structural integrity, layout conventions, and rules.
+ * - validate [<version>] [--json] [--quiet] [--fix] : Audits structural integrity, layout conventions, and rules.
  * - get-version                              : Extracts the highest parsed stable release version string.
  * - get-release-notes [<version>]            : Isolates markdown bullet content for a release.
  */
@@ -24,7 +24,8 @@ const defaultConfig = {
   bulletSign: '- ',
   allowedPrefixes: ['Added:', 'Changed:', 'Fixed:'],
   initialReleaseText: 'Initial release',
-  maxLineLength: 120
+  maxLineLength: 120,
+  enforcePrefixOrder: true
 }
 
 // 2. Load Configuration Overrides if Present
@@ -34,7 +35,8 @@ const configSchema = {
   bulletSign: 'string',
   allowedPrefixes: 'array',
   initialReleaseText: 'string',
-  maxLineLength: 'number'
+  maxLineLength: 'number',
+  enforcePrefixOrder: 'boolean'
 }
 
 const RED = '\x1b[31m'
@@ -85,12 +87,12 @@ if (fs.existsSync(configPath)) {
 
 // 3. Process CLI Parameters
 const argv = minimist(process.argv.slice(2), {
-  boolean: ['json', 'quiet', 'dry-run', 'help', 'version', 'stable'],
+  boolean: ['json', 'quiet', 'dry-run', 'help', 'version', 'stable', 'fix'],
   string: ['file'],
   alias: { f: 'file', h: 'help', v: 'version' }
 })
 
-const knownFlags = new Set(['_', 'json', 'quiet', 'dry-run', 'help', 'version', 'stable', 'file', 'f', 'h', 'v'])
+const knownFlags = new Set(['_', 'json', 'quiet', 'dry-run', 'help', 'version', 'stable', 'fix', 'file', 'f', 'h', 'v'])
 const unknownFlag = Object.keys(argv).find(key => !knownFlags.has(key))
 if (unknownFlag) {
   console.error(`${RED}Error: Unknown option "--${unknownFlag}". Run "flatlog --help" for usage.${RESET}`)
@@ -146,6 +148,7 @@ Options:
   --file, -f <file>      Target changelog file (default: CHANGELOG.md)
   --json                 Output results as JSON (validate only)
   --quiet                Suppress output on success (validate only)
+  --fix                  Reorder bullets by prefix group before validating (validate only)
   --dry-run              Preview changes without writing (bullet, release, next)
   --stable               With get-version/get-release-notes, ignore prereleases
   --version, -v          Print flatlog version
@@ -215,6 +218,7 @@ if (!command) {
 const flagScope = {
   json: ['validate'],
   quiet: ['validate'],
+  fix: ['validate'],
   'dry-run': ['bullet', 'release', 'next'],
   stable: ['get-version', 'get-release-notes']
 }
@@ -288,7 +292,8 @@ if (command === 'bullet') {
   }
 
   const bulletLine = `${config.bulletSign}${bulletText}`
-  if (!validationRegex.test(bulletLine)) {
+  const bulletMatch = validationRegex.exec(bulletLine)
+  if (!bulletMatch) {
     console.error(`${RED}Error: Invalid prefix. Allowed: ${config.allowedPrefixes.join(', ')}${RESET}`)
     process.exit(1)
   }
@@ -299,7 +304,18 @@ if (command === 'bullet') {
   const placeholderIdx = fileLines.findIndex(line => compiledPlaceholderRegex.test(line.trim()))
 
   if (placeholderIdx !== -1) {
-    fileLines.splice(placeholderIdx + 1, 0, bulletLine)
+    let insertIdx = placeholderIdx + 1
+    if (config.enforcePrefixOrder) {
+      // Append to the end of the bullet's prefix group so the block stays ordered.
+      const newRank = config.allowedPrefixes.indexOf(bulletMatch[1])
+      for (let i = placeholderIdx + 1; i < fileLines.length; i++) {
+        const line = fileLines[i].trim()
+        if (compiledVersionRegex.test(line) || compiledPlaceholderRegex.test(line)) break
+        const lineMatch = validationRegex.exec(line)
+        if (lineMatch && config.allowedPrefixes.indexOf(lineMatch[1]) <= newRank) insertIdx = i + 1
+      }
+    }
+    fileLines.splice(insertIdx, 0, bulletLine)
   } else {
     const titleIdx = fileLines.findIndex(line => titleRegex.test(line.trim()))
     const injectionBlock = ['', livePlaceholderText, bulletLine]
@@ -429,6 +445,31 @@ if (expectedVersion && !isValidVersion(expectedVersion)) {
 const content = fs.readFileSync(filePath, 'utf8')
 const lines = content.split(/\r?\n/)
 
+// --fix: stable-sort each block's bullets by prefix rank, writing them back into the same line slots.
+if (argv.fix && config.enforcePrefixOrder) {
+  const rankOf = (line) => config.allowedPrefixes.indexOf(validationRegex.exec(line)[1])
+  let slots = []
+  let changed = false
+  const flush = () => {
+    const sorted = slots.map(i => lines[i]).sort((a, b) => rankOf(a) - rankOf(b))
+    slots.forEach((lineIdx, k) => {
+      if (lines[lineIdx] !== sorted[k]) changed = true
+      lines[lineIdx] = sorted[k]
+    })
+    slots = []
+  }
+  lines.forEach((rawLine, i) => {
+    const line = rawLine.trimEnd()
+    if (compiledVersionRegex.test(line) || compiledPlaceholderRegex.test(line)) flush()
+    else if (validationRegex.test(rawLine)) slots.push(i)
+  })
+  flush()
+  if (changed) {
+    fs.writeFileSync(filePath, lines.join('\n'), 'utf8')
+    if (!isJsonMode && !isQuiet) console.log(`${GREEN}✔${RESET} Bullet order fixed.`)
+  }
+}
+
 const report = { success: true, errors: [], warnings: [], metadata: { releasesChecked: 0, topmostVersion: null } }
 let titleFound = false
 let currentVersion = null
@@ -436,6 +477,7 @@ let currentVersionNormalized = null
 let currentVersionDate = null
 let hasPlaceholder = false
 let latestStableVersion = null
+let maxBulletRank = -1
 const versionsFound = []
 
 lines.forEach((rawLine, index) => {
@@ -467,6 +509,7 @@ lines.forEach((rawLine, index) => {
     currentVersion = 'placeholder'
     currentVersionNormalized = null
     hasPlaceholder = true
+    maxBulletRank = -1
     return
   }
 
@@ -500,6 +543,7 @@ lines.forEach((rawLine, index) => {
     currentVersionNormalized = normalizedVersion
     currentVersionDate = extractedDate
     if (!isDuplicate) versionsFound.push(normalizedVersion)
+    maxBulletRank = -1
     return
   }
 
@@ -510,10 +554,17 @@ lines.forEach((rawLine, index) => {
     }
 
     const isInitialRelease = line === assembledInitialRelease
-    const isValidPrefix = validationRegex.test(line)
+    const prefixMatch = validationRegex.exec(line)
+    const isValidPrefix = prefixMatch !== null
 
     if (!isValidPrefix && !isInitialRelease) {
       report.errors.push({ line: lineNum, message: `Invalid prefix. Allowed: ${config.allowedPrefixes.join(', ')}` })
+    } else if (config.enforcePrefixOrder && !isInitialRelease) {
+      const rank = config.allowedPrefixes.indexOf(prefixMatch[1])
+      if (rank < maxBulletRank) {
+        report.errors.push({ line: lineNum, message: `Bullet "${prefixMatch[1]}" is out of order.` })
+      }
+      if (rank > maxBulletRank) maxBulletRank = rank
     }
 
     if (line.length > config.maxLineLength) {
